@@ -56,6 +56,8 @@ Defaults to the **Gradient Boosting (XGBoost)** signal — the strongest candida
 
 Add `--max-trades-per-day N` (default **1**, the intended discipline) to allow more than one trade slot in a single day - useful for quickly gathering a validation sample (e.g. `--max-trades-per-day 20`) rather than waiting many calendar days for one trade each. Switch back to the default of 1 once you've gathered enough data. **This is also available directly on the dashboard** (a "Max trades per day" box next to the Start button) - no need to use the command line for this.
 
+Add `--max-capital-per-trade N` (default **₹2,00,000**) to cap how much of the balance is ever risked on a single trade, no matter how large the account has compounded to - anything above the cap simply stays idle/untouched. **Also available directly on the dashboard** (a "Max capital per trade (Rs)" box next to the Start button).
+
 **Train the ML signal engine** (labels historical candles, trains all 3 model types - Random Forest, Logistic Regression, Gradient Boosting - with calibrated thresholds, saves to `data/models/`):
 ```
 py src/ml_signal.py

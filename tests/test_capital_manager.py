@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import capital_manager
-from capital_manager import apply_trade_pnl, calculate_affordable_lots, load_capital, save_capital
+from capital_manager import apply_trade_pnl, calculate_affordable_lots, deployable_capital, load_capital, save_capital
 
 PREMIUM = 265.25  # today's real first trade
 
@@ -43,6 +43,18 @@ def test_apply_trade_pnl_leaves_idle_capital_untouched():
     new_capital = apply_trade_pnl(capital_before, lots, PREMIUM, losing_exit)
     idle = capital_before - (lots * 65 * PREMIUM)
     assert new_capital == idle + (lots * 65 * losing_exit)
+
+
+def test_deployable_capital_below_cap_is_unaffected():
+    assert deployable_capital(22141.75, max_per_trade=200000.0) == 22141.75
+
+
+def test_deployable_capital_above_cap_is_limited():
+    assert deployable_capital(700000.0, max_per_trade=200000.0) == 200000.0
+
+
+def test_deployable_capital_exactly_at_cap():
+    assert deployable_capital(200000.0, max_per_trade=200000.0) == 200000.0
 
 
 def test_load_capital_defaults_when_no_state_file(tmp_path, monkeypatch):

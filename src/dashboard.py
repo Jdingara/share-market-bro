@@ -18,7 +18,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from capital_manager import load_capital
+from capital_manager import MAX_CAPITAL_PER_TRADE, load_capital
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BACKTEST_CSV = PROJECT_ROOT / "data" / "backtest_results" / "trades.csv"
@@ -31,12 +31,16 @@ st.set_page_config(page_title="Share Market Bro", layout="wide")
 
 # ---------- Bot control ----------
 
-def start_bot(max_trades_per_day: int = 1) -> None:
+def start_bot(max_trades_per_day: int = 1, max_capital_per_trade: float = MAX_CAPITAL_PER_TRADE) -> None:
     LIVE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     log_fh = open(LIVE_LOG_PATH, "w")
     process = subprocess.Popen(
         # -u: unbuffered, so the log file updates live, not just at exit
-        [sys.executable, "-u", str(PAPER_TRADER_SCRIPT), "--max-trades-per-day", str(max_trades_per_day)],
+        [
+            sys.executable, "-u", str(PAPER_TRADER_SCRIPT),
+            "--max-trades-per-day", str(max_trades_per_day),
+            "--max-capital-per-trade", str(max_capital_per_trade),
+        ],
         stdout=log_fh,
         stderr=subprocess.STDOUT,
         cwd=str(PROJECT_ROOT),
@@ -45,6 +49,7 @@ def start_bot(max_trades_per_day: int = 1) -> None:
     st.session_state.bot_log_fh = log_fh
     st.session_state.bot_start_time = datetime.now()
     st.session_state.bot_max_trades = max_trades_per_day
+    st.session_state.bot_max_capital_per_trade = max_capital_per_trade
 
 
 def stop_bot() -> None:
@@ -77,10 +82,20 @@ def render_bot_control() -> None:
     if max_trades != 1:
         st.warning(f"Set to {int(max_trades)} - remember to set this back to 1 once you're done validating.")
 
+    max_capital = st.number_input(
+        "Max capital per trade (Rs)",
+        min_value=1000.0, value=MAX_CAPITAL_PER_TRADE, step=10000.0,
+        disabled=is_running,
+        help=(
+            "Never deploy more than this much of the balance on a single trade, no matter how large the "
+            f"account grows. Default: Rs {MAX_CAPITAL_PER_TRADE:,.0f}. Anything above the cap stays idle."
+        ),
+    )
+
     col1, col2, col3 = st.columns([1, 1, 3])
     with col1:
         if st.button("Start", disabled=is_running, type="primary"):
-            start_bot(max_trades_per_day=int(max_trades))
+            start_bot(max_trades_per_day=int(max_trades), max_capital_per_trade=float(max_capital))
             st.rerun()
     with col2:
         if st.button("Stop", disabled=not is_running):
@@ -90,7 +105,9 @@ def render_bot_control() -> None:
         if is_running:
             started = st.session_state.bot_start_time.strftime("%H:%M:%S")
             trades_note = f" (max {st.session_state.bot_max_trades} trades/day)" if st.session_state.get("bot_max_trades", 1) != 1 else ""
-            st.success(f"Running since {started}{trades_note}")
+            cap = st.session_state.get("bot_max_capital_per_trade", MAX_CAPITAL_PER_TRADE)
+            capital_note = f" (cap Rs {cap:,.0f}/trade)" if cap != MAX_CAPITAL_PER_TRADE else ""
+            st.success(f"Running since {started}{trades_note}{capital_note}")
         else:
             st.info("Not running")
 

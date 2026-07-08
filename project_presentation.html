@@ -245,11 +245,15 @@
       </div>
       <div class="step">
         <div class="dot-col"><div class="dot">4</div><div class="line"></div></div>
-        <div class="content"><h3>Paper Trading <span class="status progress">In progress</span></h3><p>Runs live, all day, against real current prices — with fake money, to prove the strategy works in real time.</p></div>
+        <div class="content"><h3>Paper Trading <span class="status done">Live</span></h3><p>Runs live, all day, against real current prices with fake money — <strong>already completed its first real trade, a win.</strong></p></div>
       </div>
       <div class="step">
-        <div class="dot-col"><div class="dot">6</div></div>
-        <div class="content"><h3>Machine Learning Upgrade <span class="status done">Done</span></h3><p>A smarter version that learns patterns from data directly, found more than double the trading opportunities.</p></div>
+        <div class="dot-col"><div class="dot">6</div><div class="line"></div></div>
+        <div class="content"><h3>Machine Learning Upgrade <span class="status done">Done</span></h3><p>Three models built and honestly compared (Random Forest, Logistic Regression, Gradient Boosting) — the best one is now running live.</p></div>
+      </div>
+      <div class="step">
+        <div class="dot-col"><div class="dot">5</div></div>
+        <div class="content"><h3>Live Trading (real money) <span class="status progress">Not started</span></h3><p>Only after paper trading proves itself over a real multi-day track record.</p></div>
       </div>
     </div>
   </div>
@@ -257,49 +261,49 @@
 
 <section>
   <div class="wrap">
-    <h2><span class="num">5</span> Tech stack — what it's actually built with</h2>
-    <p class="lede">The tools and libraries behind the scenes, not the trading logic itself.</p>
-    <div class="grid cols-3">
+    <h2><span class="num">5</span> The full technical stack, explained simply</h2>
+    <p class="lede">Every app has three basic pieces: something that thinks (backend), something that runs it (server), and something you look at (frontend). Here's what each one is <em>in this project specifically</em>, and every tool used, explained in plain terms.</p>
+
+    <div class="grid cols-3" style="margin-bottom:20px">
       <div class="card">
-        <h3 style="margin-top:0; font-size:15px">Language</h3>
-        <div class="pill-row"><span class="pill">Python 3.14</span></div>
+        <h3 style="margin-top:0; color:var(--accent-2)">🧠 Backend</h3>
+        <p style="color:var(--muted); font-size:13px; margin:0 0 10px">The "thinking" part — nobody sees it directly</p>
+        <p style="margin:0; font-size:14.5px">All written in <strong>Python</strong>. This is every piece of logic: connecting to the broker, analyzing prices, deciding buy/sell, running the ML models, tracking money. About 20 files, each with one clear job (see Section 4's phases).</p>
       </div>
       <div class="card">
-        <h3 style="margin-top:0; font-size:15px">Market &amp; Broker Connection</h3>
-        <div class="pill-row">
-          <span class="pill">Zerodha Kite Connect API</span>
-          <span class="pill">requests</span>
-          <span class="pill">pyotp (secure auto-login)</span>
-        </div>
+        <h3 style="margin-top:0; color:var(--accent-2)">🖥️ Server</h3>
+        <p style="color:var(--muted); font-size:13px; margin:0 0 10px">Where it actually runs</p>
+        <p style="margin:0; font-size:14.5px">There is <strong>no cloud server</strong> — everything runs on this one personal computer. <strong>Streamlit</strong> creates a tiny local web server on this machine (address <code>localhost:8501</code>), which only this computer can open in a browser. Nothing is exposed to the internet.</p>
       </div>
       <div class="card">
-        <h3 style="margin-top:0; font-size:15px">Data &amp; Analysis</h3>
-        <div class="pill-row">
-          <span class="pill">pandas</span>
-          <span class="pill">NumPy</span>
-        </div>
-      </div>
-      <div class="card">
-        <h3 style="margin-top:0; font-size:15px">Machine Learning</h3>
-        <div class="pill-row">
-          <span class="pill">scikit-learn</span>
-          <span class="pill">joblib (model saving)</span>
-        </div>
-      </div>
-      <div class="card">
-        <h3 style="margin-top:0; font-size:15px">Dashboard / UI</h3>
-        <div class="pill-row"><span class="pill">Streamlit</span></div>
-      </div>
-      <div class="card">
-        <h3 style="margin-top:0; font-size:15px">Quality &amp; Reliability</h3>
-        <div class="pill-row">
-          <span class="pill">pytest (39 automated tests)</span>
-          <span class="pill">python-dotenv (secure credentials)</span>
-        </div>
+        <h3 style="margin-top:0; color:var(--accent-2)">🎨 Frontend</h3>
+        <p style="color:var(--muted); font-size:13px; margin:0 0 10px">What you actually see and click</p>
+        <p style="margin:0; font-size:14.5px">The <strong>dashboard webpage</strong> — Start/Stop buttons, live activity log, win-rate and profit numbers, trade history tables and charts. Built with Streamlit, which turns plain Python code directly into a webpage, no separate web-design work needed.</p>
       </div>
     </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Every dependency used, and why</h3>
+      <table>
+        <tr><th>Tool</th><th>Category</th><th>What it actually does for us</th></tr>
+        <tr><td><strong>Python 3.14</strong></td><td>Language</td><td>The programming language everything else is written in</td></tr>
+        <tr><td><strong>kiteconnect</strong></td><td>Backend</td><td>Zerodha's official toolkit — lets the code log in, read prices, and check option contracts on your real account</td></tr>
+        <tr><td><strong>requests</strong></td><td>Backend</td><td>Handles the raw internet communication with Zerodha's servers</td></tr>
+        <tr><td><strong>pyotp</strong></td><td>Backend</td><td>Generates the same 2FA security code your phone authenticator app would, so login can happen automatically every morning</td></tr>
+        <tr><td><strong>python-dotenv</strong></td><td>Backend</td><td>Safely loads your private login details from one protected file, so passwords are never typed directly into the code</td></tr>
+        <tr><td><strong>pandas</strong></td><td>Backend</td><td>Organizes price history into easy-to-analyze tables (like a spreadsheet, but code-driven)</td></tr>
+        <tr><td><strong>NumPy</strong></td><td>Backend</td><td>Fast number-crunching that pandas and the ML tools are built on top of</td></tr>
+        <tr><td><strong>scikit-learn</strong></td><td>Backend / ML</td><td>Provides the Random Forest and Logistic Regression prediction models</td></tr>
+        <tr><td><strong>XGBoost</strong></td><td>Backend / ML</td><td>Provides the Gradient Boosting model — currently the best performer, running live</td></tr>
+        <tr><td><strong>joblib</strong></td><td>Backend / ML</td><td>Saves a trained model to a file and reloads it later, so it doesn't need retraining every time the bot starts</td></tr>
+        <tr><td><strong>Streamlit</strong></td><td>Server + Frontend</td><td>Turns the Python code into the local webpage dashboard you actually interact with</td></tr>
+        <tr><td><strong>pytest</strong></td><td>Quality Control</td><td>Runs 53 automated checks every time the code changes, to catch mistakes before they matter</td></tr>
+        <tr><td><strong>Git + GitHub</strong></td><td>Version Control</td><td>Keeps a complete, private, backed-up history of every code change ever made</td></tr>
+      </table>
+    </div>
+
     <div class="callout" style="margin-top:20px">
-      Everything runs locally on a personal computer — no cloud servers, no external hosting. The dashboard is a local web page only reachable from this machine.
+      <strong>In one sentence:</strong> the backend (Python logic) does all the thinking, it runs entirely on this one computer with no cloud involved (the server), and Streamlit displays everything happening in a clean webpage (the frontend) — three layers, each with one job, all working together.
     </div>
   </div>
 </section>
@@ -323,17 +327,21 @@
       </div>
       <div class="card">
         <h3 style="margin-top:0; color:var(--accent)">Approach B — Machine Learning</h3>
-        <p style="color:var(--muted); font-size:14.5px">A model that learns patterns instead of following fixed rules:</p>
+        <p style="color:var(--muted); font-size:14.5px">Models that learn patterns instead of following fixed rules — <strong>three were built and honestly compared</strong>:</p>
         <ul class="check">
-          <li><strong>Random Forest Classifier</strong> (scikit-learn) — an ensemble of decision trees</li>
+          <li><strong>Logistic Regression</strong> — the simplest model, a straight dividing line through the data</li>
+          <li><strong>Random Forest</strong> — an ensemble of decision trees</li>
+          <li><strong>Gradient Boosting (XGBoost)</strong> — trees that each correct the previous one's mistakes</li>
           <li><strong>16 engineered features</strong> per moment in time (trend strength, momentum, volatility, time of day, etc.)</li>
-          <li><strong>Trained on real historical outcomes</strong> — "would this trade have won?"</li>
-          <li><strong>Chronological validation</strong> — tested only on data it never saw during training, to keep results honest</li>
+          <li><strong>Chronological validation</strong> — tested only on data never seen during training, to keep results honest</li>
         </ul>
       </div>
     </div>
 
     <div class="callout">
+      <strong>Winner: Gradient Boosting (XGBoost)</strong> — beat both other models on every measure (see Results below) and is now the model actually running live. Logistic Regression coming out weakest was actually a useful finding: it proved the real pattern in the data is <em>not</em> a simple straight line, which is exactly why the more sophisticated tree-based models do better — not complexity for its own sake.
+    </div>
+    <div class="callout" style="margin-top:16px">
       <strong>Options Pricing Model:</strong> Since real historical option prices aren't available from the broker, the bot uses the <strong>Black-Scholes model</strong> — the industry-standard mathematical formula for pricing options — to realistically simulate what an option's price would have done during backtesting.
     </div>
   </div>
@@ -345,30 +353,78 @@
     <p class="lede">All figures below are from backtesting (simulated on real historical prices) and paper trading (simulated money, live prices) — no real capital has been risked yet.</p>
 
     <div class="grid cols-3" style="margin-bottom:24px">
-      <div class="stat"><div class="value">132</div><div class="label">Trading days tested</div></div>
-      <div class="stat"><div class="value blue">17</div><div class="label">ML trades found (test period)</div></div>
-      <div class="stat"><div class="value">+1.76%</div><div class="label">ML avg. profit per trade</div></div>
+      <div class="stat"><div class="value">132</div><div class="label">Trading days backtested</div></div>
+      <div class="stat"><div class="value blue">63.2%</div><div class="label">XGBoost win rate (backtest)</div></div>
+      <div class="stat"><div class="value">₹22,141.75</div><div class="label">Live paper capital (from ₹20,000)</div></div>
     </div>
 
-    <div class="card">
-      <h3 style="margin-top:0">Rule-Based vs. Machine Learning — head-to-head</h3>
+    <div class="card" style="border-color: rgba(51,201,163,0.4)">
+      <h3 style="margin-top:0; color:var(--accent)">🎉 First real live trade — a WIN</h3>
+      <p style="margin-bottom:0">On 2026-07-08, the bot's very first genuine live trade played out exactly as designed: a <strong>PUT</strong> signal fired at 75% model confidence, bought <code>NIFTY24200PE</code> at ₹265.25, and hit the <strong>+10% target in under 2 minutes</strong>, exiting at ₹298.20. Real money math: 1 lot (65 units) = <strong>+₹2,141.75 profit</strong>, growing the paper account from ₹20,000 to ₹22,141.75. Full pipeline — signal, option lookup, entry, monitoring, exit, capital update — worked end-to-end for the first time.</p>
+    </div>
+
+    <div class="card" style="margin-top:20px">
+      <h3 style="margin-top:0">Rule-Based vs. all 3 ML models — head-to-head backtest</h3>
+      <p style="color:var(--muted); font-size:13px; margin-top:-8px">Same held-out 40 days for every approach, never seen during training.</p>
       <table>
-        <tr><th>Approach</th><th>Trades Taken</th><th>Win / Loss / Held-to-close</th><th>Win Rate</th><th>Avg. P&amp;L</th></tr>
-        <tr><td>Rule-Based</td><td>7</td><td>3 / 0 / 4</td><td>100%*</td><td class="highlight">+2.81%</td></tr>
-        <tr><td>Machine Learning</td><td>17</td><td>10 / 7 / 0</td><td>58.8%</td><td class="highlight-blue">+1.76%</td></tr>
+        <tr><th>Approach</th><th>Trades</th><th>Win / Loss / Held</th><th>Win Rate</th><th>Avg. P&amp;L</th></tr>
+        <tr><td>Rule-Based</td><td>7</td><td>2 / 2 / 3</td><td>50.0%</td><td>-0.38%</td></tr>
+        <tr><td>Random Forest</td><td>36</td><td>21 / 14 / 1</td><td>60.0%</td><td class="highlight-blue">+2.08%</td></tr>
+        <tr><td>Logistic Regression</td><td>15</td><td>9 / 6 / 0</td><td>60.0%</td><td>+2.00%</td></tr>
+        <tr><td><strong>Gradient Boosting (XGBoost)</strong></td><td><strong>38</strong></td><td>24 / 14 / 0</td><td><strong>63.2%</strong></td><td class="highlight">+2.63%</td></tr>
       </table>
-      <p style="color:var(--muted); font-size:13px; margin-bottom:0">*Based on only 3 decided trades — too small a sample to fully trust yet. The ML model's 58.8% is measured across a much larger, more statistically meaningful set of 17 trades.</p>
+      <p style="color:var(--muted); font-size:13px; margin-bottom:0">XGBoost is the current live default — best win rate, best average profit, and far more trading opportunities than the original rule-based approach.</p>
     </div>
 
     <div class="callout warn" style="margin-top:20px">
-      <strong>Honest read:</strong> The ML model found more than <strong>2× the trading opportunities</strong> while still winning clearly more often than it loses — directly solving the original concern that the rule-based bot traded too rarely (only ~1 in every 7-8 days). Promising, but still based on one test window — not yet proven over a long real-world track record.
+      <strong>Honest read:</strong> These numbers already survived one real correction — an expiry-date bug initially made results look better than they should have; after fixing it and retraining, XGBoost still won, just by a smaller margin. That's a good sign the result is real, not a fluke, but it's still one backtest window plus one live trade — encouraging, not proven. The next few days of live paper trading (with more trade opportunities enabled for faster validation) will tell us a lot more.
     </div>
   </div>
 </section>
 
 <section>
   <div class="wrap">
-    <h2><span class="num">8</span> Safety &amp; discipline built in</h2>
+    <h2><span class="num">8</span> A look ahead — what could 100 trades look like?</h2>
+    <p class="lede">"Day" below means a completed <em>trade</em>, not a calendar day — remember, most days have no trade at all, so 100 trades will realistically span many months, not 100 days. Capital compounds automatically (Section on Safety below), buying more lots as it grows.</p>
+
+    <div class="grid cols-2">
+      <div class="card" style="border-color: rgba(239,106,106,0.4)">
+        <h3 style="margin-top:0; color:var(--danger)">❌ If every single trade won (illustration only — NOT realistic)</h3>
+        <p style="color:var(--muted); font-size:13px">Assumes a 100% win rate, every trade exactly +10%. This <strong>cannot actually happen</strong> — we've already measured a real win rate around 60-63%, not 100%. Shown only to demonstrate how compounding math works — now with the new <strong>₹2,00,000-per-trade safety cap</strong> (see Section 9) applied, so it can't run away forever.</p>
+        <table>
+          <tr><th>Trade #</th><th>Capital (with cap)</th><th>Lots</th></tr>
+          <tr><td>1</td><td>₹21,724</td><td>1</td></tr>
+          <tr><td>10</td><td>₹38,965</td><td>2</td></tr>
+          <tr><td>25</td><td>₹1,37,241</td><td>7</td></tr>
+          <tr><td>50</td><td>₹5,94,134</td><td class="highlight">11 (capped)</td></tr>
+          <tr><td>100</td><td>₹15,42,402</td><td class="highlight">11 (capped)</td></tr>
+        </table>
+        <p style="color:var(--muted); font-size:12.5px; margin-bottom:0"><strong>Without the cap</strong>, this exact same fantasy math would have reached ₹13.9 lakh by trade 50 and an absurd <strong>₹16.2 crore by trade 100 (8,533 lots on a single trade)</strong> — real proof the cap does actual work, not just paperwork. With it, the position size deployed on any one trade tops out at 11 lots (~₹1.9 lakh) forever, no matter how large the account eventually grows.</p>
+      </div>
+      <div class="card" style="border-color: rgba(51,201,163,0.4)">
+        <h3 style="margin-top:0; color:var(--accent)">✅ A realistic scenario (using our actual measured ~60% win rate)</h3>
+        <p style="color:var(--muted); font-size:13px">Wins and losses both happen. At 60% wins / 40% losses on a +10%/-10% bracket, the honest average works out to about <strong>+2% per trade</strong> (0.6×10% − 0.4×10%) — modest, but real.</p>
+        <table>
+          <tr><th>Trade #</th><th>Capital</th><th>Lots</th></tr>
+          <tr><td>1</td><td>₹20,400</td><td>1</td></tr>
+          <tr><td>10</td><td>₹24,380</td><td>1</td></tr>
+          <tr><td>25</td><td>₹32,812</td><td>1</td></tr>
+          <tr><td>50</td><td>₹53,832</td><td>3</td></tr>
+          <tr><td>100</td><td>₹1,44,893</td><td>8</td></tr>
+        </table>
+        <p style="color:var(--muted); font-size:12.5px; margin-bottom:0">Roughly 7× the starting capital over 100 trades — genuinely good, and believable. This path never even gets close to the ₹2,00,000 cap — it exists as a backstop for a much luckier streak than we actually expect, not a wall we plan on hitting.</p>
+      </div>
+    </div>
+
+    <div class="callout warn" style="margin-top:20px">
+      <strong>This is not a promise or a guarantee — it's a planning illustration.</strong> Real results depend entirely on whether the live win rate actually holds up (which is exactly what the next few days/weeks of paper trading will tell us). Losses will happen along the way, sometimes several in a row, and can just as easily shrink the lot count back down as grow it. The "realistic" table above is our best honest estimate today, built from real measured numbers, not a target we're chasing at any cost. Separately, the ₹2,00,000 per-trade cap is a hard ceiling that applies no matter which scenario plays out — it bounds the worst case forever, even in a future none of today's numbers anticipate.
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">9</span> Safety &amp; discipline built in</h2>
     <div class="card">
       <ul class="check">
         <li>Maximum <strong>one trade per day</strong> — no exceptions, no chasing losses</li>
@@ -376,8 +432,11 @@
         <li>Will do <strong>nothing at all</strong> on days with no genuinely good setup — never forces a trade</li>
         <li>Fully tested on <strong>132 days of real historical data</strong> before going live with even fake money</li>
         <li>Currently running on <strong>simulated money only</strong> — real prices, zero real financial risk</li>
+        <li><strong>Real position sizing</strong> — only buys as many whole option lots as the current paper balance can actually afford (never a fractional or forced position); sits out entirely if funds are too low</li>
+        <li><strong>Hard cap: never more than ₹2,00,000 risked on any single trade</strong> — even if the account compounds to a much larger balance over time, one trade can never risk more than this fixed ceiling; any balance above the cap simply sits idle rather than being deployed</li>
         <li>A visual dashboard (web page) to start/stop it and see every trade, win rate, and profit/loss at a glance</li>
         <li>Automatically recovers from network hiccups instead of silently crashing during the trading day</li>
+        <li>Source code kept in a <strong>private GitHub repository</strong> — credentials and trade history never included</li>
       </ul>
     </div>
   </div>
@@ -385,11 +444,11 @@
 
 <section>
   <div class="wrap">
-    <h2><span class="num">9</span> What we're working toward</h2>
+    <h2><span class="num">10</span> What we're working toward</h2>
     <div class="card">
-      <p style="margin-top:0"><strong>Right now:</strong> letting the bot run real, live trading days with simulated money to build a genuine track record — proving it works in real time, not just in a backtest.</p>
-      <p><strong>Next decision:</strong> whether the smarter Machine Learning version should take over from the rule-based one for this live testing phase.</p>
-      <p style="margin-bottom:0"><strong>The ultimate goal:</strong> once the strategy has proven itself consistently over real trading days with fake money, carefully move to trading with <strong>real capital</strong> — with the same strict discipline (one trade a day, fixed profit target, fixed stop-loss) that's been built in from day one.</p>
+      <p style="margin-top:0"><strong>Right now:</strong> running several days of live paper trading (temporarily allowing a few more trade opportunities per day than the normal one-a-day rule, purely to gather a real results sample faster) to see if live performance matches the backtest.</p>
+      <p><strong>Next decision (targeted for next week):</strong> review that sample honestly — win rate, profit/loss, how the capital moved — and decide whether any tuning is needed before settling back into the standard one-trade-a-day discipline for the long-term track record.</p>
+      <p style="margin-bottom:0"><strong>The ultimate goal:</strong> once the strategy has proven itself consistently over real trading days with fake money, carefully move to trading with <strong>real capital</strong> — with the same strict discipline (one trade a day, real position sizing, fixed profit target, fixed stop-loss) that's been built in from day one.</p>
     </div>
   </div>
 </section>

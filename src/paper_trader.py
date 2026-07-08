@@ -25,7 +25,14 @@ import pandas as pd
 import requests
 
 from auth import login
-from capital_manager import calculate_affordable_lots, apply_trade_pnl, load_capital, save_capital
+from capital_manager import (
+    MAX_CAPITAL_PER_TRADE,
+    apply_trade_pnl,
+    calculate_affordable_lots,
+    deployable_capital,
+    load_capital,
+    save_capital,
+)
 from data_fetch import fetch_historical_data, get_instrument_token
 from ml_signal import MODEL_TYPES, generate_ml_signal, load_models
 from option_lookup import find_nearest_valid_expiry, find_option_instrument, get_option_premium
@@ -148,6 +155,7 @@ def run(
     max_minutes: Optional[int] = None,
     signal_source: str = DEFAULT_SIGNAL_SOURCE,
     max_trades_per_day: int = 1,
+    max_capital_per_trade: float = MAX_CAPITAL_PER_TRADE,
 ) -> None:
     print(f"Signal source for today: {signal_source}")
     if max_trades_per_day != 1:
@@ -169,6 +177,7 @@ def run(
 
     capital = load_capital()
     print(f"Starting capital: Rs {capital:,.2f}")
+    print(f"Max capital per trade: Rs {max_capital_per_trade:,.2f}")
 
     start_time = datetime.now()
     trades_taken_today = 0
@@ -217,12 +226,13 @@ def run(
             tradingsymbol = instrument["tradingsymbol"]
             entry_premium = _call_with_retry(get_option_premium, kite, tradingsymbol)
 
-            lots = calculate_affordable_lots(capital, entry_premium)
+            capped_capital = deployable_capital(capital, max_capital_per_trade)
+            lots = calculate_affordable_lots(capped_capital, entry_premium)
             if lots == 0:
                 needed = entry_premium * 65
                 print(
-                    f"Insufficient capital (Rs {capital:,.2f}) for even 1 lot at this premium "
-                    f"(needs Rs {needed:,.2f}) - skipping this trade slot."
+                    f"Insufficient capital (Rs {capped_capital:,.2f} deployable, capped at Rs {max_capital_per_trade:,.2f}) "
+                    f"for even 1 lot at this premium (needs Rs {needed:,.2f}) - skipping this trade slot."
                 )
                 trades_taken_today += 1
                 continue
@@ -290,5 +300,13 @@ if __name__ == "__main__":
     parser.add_argument("--max-trades-per-day", type=int, default=1,
                          help="Trade slots per day (default: 1, the intended live discipline). Set higher "
                               "(e.g. 20) only for fast validation days - switch back to 1 afterward.")
+    parser.add_argument("--max-capital-per-trade", type=float, default=MAX_CAPITAL_PER_TRADE,
+                         help=f"Never deploy more than this much of the balance on one trade "
+                              f"(default: Rs {MAX_CAPITAL_PER_TRADE:,.2f}). Excess balance stays idle.")
     args = parser.parse_args()
-    run(max_minutes=args.max_minutes, signal_source=args.signal_source, max_trades_per_day=args.max_trades_per_day)
+    run(
+        max_minutes=args.max_minutes,
+        signal_source=args.signal_source,
+        max_trades_per_day=args.max_trades_per_day,
+        max_capital_per_trade=args.max_capital_per_trade,
+    )
