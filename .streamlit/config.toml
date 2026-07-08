@@ -1,0 +1,8 @@
+[server]
+# Bind to localhost only - this dashboard can start/stop a bot connected to a
+# real Zerodha account, so it must never be reachable from outside this machine.
+address = "localhost"
+headless = true
+
+[browser]
+gatherUsageStats = false

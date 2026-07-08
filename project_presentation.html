@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Share Market Bro — Project Overview</title>
+<style>
+  :root {
+    --bg: #0b1220;
+    --panel: #121a2b;
+    --panel-2: #16213a;
+    --border: #22304a;
+    --text: #e8edf5;
+    --muted: #93a1b8;
+    --accent: #33c9a3;
+    --accent-2: #5b8cff;
+    --warn: #f2a94e;
+    --danger: #ef6a6a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+
+  header.hero {
+    background: radial-gradient(1200px 400px at 50% -100px, rgba(91,140,255,0.25), transparent),
+                linear-gradient(180deg, #0d1526, #0b1220 70%);
+    border-bottom: 1px solid var(--border);
+    padding: 72px 0 56px;
+    text-align: center;
+  }
+  header.hero .tag {
+    display: inline-block;
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: rgba(51,201,163,0.1);
+    border: 1px solid rgba(51,201,163,0.3);
+    padding: 6px 14px;
+    border-radius: 999px;
+    margin-bottom: 18px;
+  }
+  header.hero h1 {
+    font-size: clamp(32px, 5vw, 48px);
+    margin: 0 0 12px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  header.hero p.sub {
+    color: var(--muted);
+    font-size: 18px;
+    max-width: 640px;
+    margin: 0 auto;
+  }
+
+  section { padding: 56px 0; border-bottom: 1px solid var(--border); }
+  section:last-of-type { border-bottom: none; }
+
+  h2 {
+    font-size: 26px;
+    margin: 0 0 8px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  h2 .num {
+    font-size: 14px;
+    color: var(--bg);
+    background: var(--accent);
+    width: 28px; height: 28px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+  }
+  .lede { color: var(--muted); margin: 0 0 32px; font-size: 16px; max-width: 720px; }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px;
+  }
+  .grid { display: grid; gap: 16px; }
+  .grid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .grid.cols-3 { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+
+  .stat {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    text-align: center;
+  }
+  .stat .value { font-size: 30px; font-weight: 700; color: var(--accent); }
+  .stat .value.blue { color: var(--accent-2); }
+  .stat .label { color: var(--muted); font-size: 13px; margin-top: 6px; }
+
+  .timeline { display: flex; flex-direction: column; gap: 0; }
+  .step {
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    gap: 18px;
+    position: relative;
+    padding-bottom: 28px;
+  }
+  .step:last-child { padding-bottom: 0; }
+  .step .dot-col { display: flex; flex-direction: column; align-items: center; }
+  .step .dot {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: var(--panel-2); border: 2px solid var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; color: var(--accent);
+    flex-shrink: 0;
+  }
+  .step .line { flex: 1; width: 2px; background: var(--border); margin-top: 4px; }
+  .step:last-child .line { display: none; }
+  .step .content { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+  .step .content h3 { margin: 0 0 6px; font-size: 16px; }
+  .step .content p { margin: 0; color: var(--muted); font-size: 14px; }
+  .step .content .status {
+    display: inline-block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    padding: 2px 8px; border-radius: 999px; margin-left: 8px; vertical-align: middle;
+  }
+  .status.done { background: rgba(51,201,163,0.15); color: var(--accent); }
+  .status.progress { background: rgba(242,169,78,0.15); color: var(--warn); }
+
+  .pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .pill {
+    background: var(--panel-2); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 999px; font-size: 13px; color: var(--text);
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  tr:last-child td { border-bottom: none; }
+  td.highlight { color: var(--accent); font-weight: 700; }
+  td.highlight-blue { color: var(--accent-2); font-weight: 700; }
+
+  .callout {
+    background: rgba(91,140,255,0.08);
+    border: 1px solid rgba(91,140,255,0.25);
+    border-left: 3px solid var(--accent-2);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-top: 20px;
+    font-size: 14.5px;
+    color: var(--text);
+  }
+  .callout.warn { background: rgba(242,169,78,0.08); border-color: rgba(242,169,78,0.3); border-left-color: var(--warn); }
+  .callout strong { color: var(--accent); }
+  .callout.warn strong { color: var(--warn); }
+
+  ul.check { list-style: none; padding: 0; margin: 0; }
+  ul.check li { padding: 8px 0 8px 30px; position: relative; color: var(--text); font-size: 15px; }
+  ul.check li::before { content: "✓"; position: absolute; left: 0; color: var(--accent); font-weight: 700; }
+
+  footer { text-align: center; padding: 40px 0 60px; color: var(--muted); font-size: 13px; }
+
+  @media (max-width: 600px) {
+    header.hero { padding: 48px 0 40px; }
+    section { padding: 40px 0; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="tag">Personal Project · Built July 2026</span>
+    <h1>Share Market Bro</h1>
+    <p class="sub">An autonomous bot that watches the Indian stock market, decides for itself when to trade NIFTY 50 options, and manages its own risk — tested thoroughly with fake money before it ever touches real capital.</p>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">1</span> What is this project?</h2>
+    <p class="lede">A computer program that trades on your behalf — but only when it finds a genuinely good opportunity, and never more than once a day.</p>
+    <div class="card">
+      <p style="margin-top:0">Every trading day, from market open to close, the bot continuously reads live price data for the <strong>NIFTY 50 index</strong> and analyzes it using a mix of statistical rules and machine learning. When — and only when — it finds a setup it's genuinely confident about, it "buys" an option (a call if it expects prices to rise, a put if it expects them to fall), then automatically exits at a fixed <strong>+10% profit target</strong> or a <strong>-10% loss limit</strong>, whichever comes first.</p>
+      <p style="margin-bottom:0">Right now, everything runs on <strong>simulated ("paper") money</strong> — real market prices, real decisions, zero real financial risk — so the strategy can be proven before it's trusted with actual capital.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">2</span> What does the bot actually do, step by step?</h2>
+    <p class="lede">The same disciplined loop, every single trading day.</p>
+    <div class="grid cols-3">
+      <div class="card"><strong>9:15 AM</strong><p style="color:var(--muted); margin:8px 0 0; font-size:14px">Logs into the trading account automatically — no manual steps.</p></div>
+      <div class="card"><strong>All day</strong><p style="color:var(--muted); margin:8px 0 0; font-size:14px">Watches live prices, checking every minute for a high-confidence setup.</p></div>
+      <div class="card"><strong>If found</strong><p style="color:var(--muted); margin:8px 0 0; font-size:14px">Picks the right option (call or put), enters at the real market price.</p></div>
+      <div class="card"><strong>Then</strong><p style="color:var(--muted); margin:8px 0 0; font-size:14px">Watches that position closely, exits automatically at +10% or -10%.</p></div>
+      <div class="card"><strong>Done for the day</strong><p style="color:var(--muted); margin:8px 0 0; font-size:14px">Win or lose, it stops. No second trade, no chasing losses.</p></div>
+      <div class="card"><strong>If nothing found</strong><p style="color:var(--muted); margin:8px 0 0; font-size:14px">It does nothing. A quiet day is a normal, expected outcome — not a failure.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">3</span> What market does it trade?</h2>
+    <div class="card">
+      <p style="margin-top:0"><strong>NIFTY 50 Index Options</strong> — not individual company shares. NIFTY 50 tracks India's top 50 listed companies as a single index, and "options" are contracts that let you bet on its direction (up via a <strong>Call</strong>, down via a <strong>Put</strong>) without owning the index itself.</p>
+      <div class="pill-row">
+        <span class="pill">Broker: Zerodha (Kite Connect API)</span>
+        <span class="pill">Instrument: NIFTY 50 weekly options</span>
+        <span class="pill">Lot size: 65</span>
+        <span class="pill">Min. 3+ days to expiry</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">4</span> How it was built — the six phases</h2>
+    <p class="lede">Built incrementally, each piece tested with real data before moving to the next.</p>
+    <div class="timeline">
+      <div class="step">
+        <div class="dot-col"><div class="dot">0</div><div class="line"></div></div>
+        <div class="content"><h3>Setup &amp; Login <span class="status done">Done</span></h3><p>Connects securely to the broker account and logs in automatically every morning.</p></div>
+      </div>
+      <div class="step">
+        <div class="dot-col"><div class="dot">1</div><div class="line"></div></div>
+        <div class="content"><h3>Historical Data <span class="status done">Done</span></h3><p>Pulls months of real NIFTY 50 price history to learn from and test against.</p></div>
+      </div>
+      <div class="step">
+        <div class="dot-col"><div class="dot">2</div><div class="line"></div></div>
+        <div class="content"><h3>Signal Engine <span class="status done">Done</span></h3><p>The rule-based "brain" — combines trend, key price levels, momentum, and chart patterns into one decision.</p></div>
+      </div>
+      <div class="step">
+        <div class="dot-col"><div class="dot">3</div><div class="line"></div></div>
+        <div class="content"><h3>Backtesting <span class="status done">Done</span></h3><p>Replayed the strategy over 132 real past trading days to measure whether it would have actually made money.</p></div>
+      </div>
+      <div class="step">
+        <div class="dot-col"><div class="dot">4</div><div class="line"></div></div>
+        <div class="content"><h3>Paper Trading <span class="status progress">In progress</span></h3><p>Runs live, all day, against real current prices — with fake money, to prove the strategy works in real time.</p></div>
+      </div>
+      <div class="step">
+        <div class="dot-col"><div class="dot">6</div></div>
+        <div class="content"><h3>Machine Learning Upgrade <span class="status done">Done</span></h3><p>A smarter version that learns patterns from data directly, found more than double the trading opportunities.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">5</span> Tech stack — what it's actually built with</h2>
+    <p class="lede">The tools and libraries behind the scenes, not the trading logic itself.</p>
+    <div class="grid cols-3">
+      <div class="card">
+        <h3 style="margin-top:0; font-size:15px">Language</h3>
+        <div class="pill-row"><span class="pill">Python 3.14</span></div>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0; font-size:15px">Market &amp; Broker Connection</h3>
+        <div class="pill-row">
+          <span class="pill">Zerodha Kite Connect API</span>
+          <span class="pill">requests</span>
+          <span class="pill">pyotp (secure auto-login)</span>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0; font-size:15px">Data &amp; Analysis</h3>
+        <div class="pill-row">
+          <span class="pill">pandas</span>
+          <span class="pill">NumPy</span>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0; font-size:15px">Machine Learning</h3>
+        <div class="pill-row">
+          <span class="pill">scikit-learn</span>
+          <span class="pill">joblib (model saving)</span>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0; font-size:15px">Dashboard / UI</h3>
+        <div class="pill-row"><span class="pill">Streamlit</span></div>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0; font-size:15px">Quality &amp; Reliability</h3>
+        <div class="pill-row">
+          <span class="pill">pytest (39 automated tests)</span>
+          <span class="pill">python-dotenv (secure credentials)</span>
+        </div>
+      </div>
+    </div>
+    <div class="callout" style="margin-top:20px">
+      Everything runs locally on a personal computer — no cloud servers, no external hosting. The dashboard is a local web page only reachable from this machine.
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">6</span> The "brain" — models &amp; technology used</h2>
+    <p class="lede">Two different approaches to deciding when to trade, built and compared honestly against each other.</p>
+
+    <div class="grid cols-2">
+      <div class="card">
+        <h3 style="margin-top:0; color:var(--accent-2)">Approach A — Rule-Based Analysis</h3>
+        <p style="color:var(--muted); font-size:14.5px">Classic technical analysis, combined together:</p>
+        <ul class="check">
+          <li><strong>EMA (Moving Averages)</strong> — reads the overall trend direction</li>
+          <li><strong>Fibonacci Retracement</strong> — finds key support/resistance price levels</li>
+          <li><strong>RSI (Momentum)</strong> — confirms real strength behind a move</li>
+          <li><strong>Candlestick Patterns</strong> — confirms a reversal is actually happening</li>
+          <li><strong>Bollinger Bands</strong> — flags when price is at a statistical extreme</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0; color:var(--accent)">Approach B — Machine Learning</h3>
+        <p style="color:var(--muted); font-size:14.5px">A model that learns patterns instead of following fixed rules:</p>
+        <ul class="check">
+          <li><strong>Random Forest Classifier</strong> (scikit-learn) — an ensemble of decision trees</li>
+          <li><strong>16 engineered features</strong> per moment in time (trend strength, momentum, volatility, time of day, etc.)</li>
+          <li><strong>Trained on real historical outcomes</strong> — "would this trade have won?"</li>
+          <li><strong>Chronological validation</strong> — tested only on data it never saw during training, to keep results honest</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout">
+      <strong>Options Pricing Model:</strong> Since real historical option prices aren't available from the broker, the bot uses the <strong>Black-Scholes model</strong> — the industry-standard mathematical formula for pricing options — to realistically simulate what an option's price would have done during backtesting.
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">7</span> Results so far</h2>
+    <p class="lede">All figures below are from backtesting (simulated on real historical prices) and paper trading (simulated money, live prices) — no real capital has been risked yet.</p>
+
+    <div class="grid cols-3" style="margin-bottom:24px">
+      <div class="stat"><div class="value">132</div><div class="label">Trading days tested</div></div>
+      <div class="stat"><div class="value blue">17</div><div class="label">ML trades found (test period)</div></div>
+      <div class="stat"><div class="value">+1.76%</div><div class="label">ML avg. profit per trade</div></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">Rule-Based vs. Machine Learning — head-to-head</h3>
+      <table>
+        <tr><th>Approach</th><th>Trades Taken</th><th>Win / Loss / Held-to-close</th><th>Win Rate</th><th>Avg. P&amp;L</th></tr>
+        <tr><td>Rule-Based</td><td>7</td><td>3 / 0 / 4</td><td>100%*</td><td class="highlight">+2.81%</td></tr>
+        <tr><td>Machine Learning</td><td>17</td><td>10 / 7 / 0</td><td>58.8%</td><td class="highlight-blue">+1.76%</td></tr>
+      </table>
+      <p style="color:var(--muted); font-size:13px; margin-bottom:0">*Based on only 3 decided trades — too small a sample to fully trust yet. The ML model's 58.8% is measured across a much larger, more statistically meaningful set of 17 trades.</p>
+    </div>
+
+    <div class="callout warn" style="margin-top:20px">
+      <strong>Honest read:</strong> The ML model found more than <strong>2× the trading opportunities</strong> while still winning clearly more often than it loses — directly solving the original concern that the rule-based bot traded too rarely (only ~1 in every 7-8 days). Promising, but still based on one test window — not yet proven over a long real-world track record.
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">8</span> Safety &amp; discipline built in</h2>
+    <div class="card">
+      <ul class="check">
+        <li>Maximum <strong>one trade per day</strong> — no exceptions, no chasing losses</li>
+        <li>Automatic <strong>+10% profit target</strong> and <strong>-10% stop-loss</strong> on every trade</li>
+        <li>Will do <strong>nothing at all</strong> on days with no genuinely good setup — never forces a trade</li>
+        <li>Fully tested on <strong>132 days of real historical data</strong> before going live with even fake money</li>
+        <li>Currently running on <strong>simulated money only</strong> — real prices, zero real financial risk</li>
+        <li>A visual dashboard (web page) to start/stop it and see every trade, win rate, and profit/loss at a glance</li>
+        <li>Automatically recovers from network hiccups instead of silently crashing during the trading day</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">9</span> What we're working toward</h2>
+    <div class="card">
+      <p style="margin-top:0"><strong>Right now:</strong> letting the bot run real, live trading days with simulated money to build a genuine track record — proving it works in real time, not just in a backtest.</p>
+      <p><strong>Next decision:</strong> whether the smarter Machine Learning version should take over from the rule-based one for this live testing phase.</p>
+      <p style="margin-bottom:0"><strong>The ultimate goal:</strong> once the strategy has proven itself consistently over real trading days with fake money, carefully move to trading with <strong>real capital</strong> — with the same strict discipline (one trade a day, fixed profit target, fixed stop-loss) that's been built in from day one.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  Share Market Bro — a personal automated trading project. Built step by step, tested honestly at every stage.
+</footer>
+
+</body>
+</html>

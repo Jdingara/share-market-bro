@@ -1,0 +1,11 @@
+.env
+.cache/
+data/historical/*.csv
+data/backtest_results/
+data/paper_trades/
+data/models/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
