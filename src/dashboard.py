@@ -71,12 +71,13 @@ def render_bot_control() -> None:
 
     max_trades = st.number_input(
         "Max trades per day",
-        min_value=1, max_value=50, value=1, step=1,
+        min_value=1, max_value=999, value=1, step=1,
         disabled=is_running,
         help=(
-            "Default 1 is the intended everyday discipline. Set higher (e.g. 10) only for a few "
-            "validation days to see more real results faster - every trade still has to independently "
-            "clear the same confidence bar, nothing is ever forced. Switch back to 1 once you've seen enough."
+            "Default 1 is the intended everyday discipline. Set much higher (e.g. 999) to remove the "
+            "cap entirely for a validation stretch - every trade still has to independently clear the "
+            "same confidence bar, nothing is ever forced, so the real number of trades taken is however "
+            "many genuine signals actually show up, not this number. Switch back to 1 once you've seen enough."
         ),
     )
     if max_trades != 1:

@@ -193,6 +193,9 @@ def run(
         if trades_taken_today >= max_trades_per_day:
             print(f"Already completed today's {trades_taken_today} trade(s) (limit {max_trades_per_day}) - done for the day.")
             break
+        if now.time() >= FORCE_CLOSE_TIME:
+            print(f"Past force-close time ({FORCE_CLOSE_TIME}) - no time left for a new entry to develop, stopping for the day.")
+            break
 
         try:
             intraday_df = _call_with_retry(_fetch_today_intraday, kite, nifty_token)
