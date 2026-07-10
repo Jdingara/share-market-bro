@@ -38,6 +38,7 @@ from ml_signal import MODEL_TYPES, generate_ml_signal, load_models
 from option_lookup import find_nearest_valid_expiry, find_option_instrument, get_option_premium
 from options_pricing import nearest_strike
 from signal_engine import generate_signal
+from trade_chart import generate_trade_chart
 
 SIGNAL_SOURCES = ["rule_based"] + MODEL_TYPES
 DEFAULT_SIGNAL_SOURCE = "gradient_boosting"  # strongest candidate in the Phase 6 comparison (77.1% win rate, +5.45% avg)
@@ -52,7 +53,7 @@ SIGNAL_POLL_INTERVAL_SECONDS = 60
 POSITION_POLL_INTERVAL_SECONDS = 15
 
 TARGET_PCT = 0.10
-STOP_LOSS_PCT = 0.10
+STOP_LOSS_PCT = 0.05
 
 DAILY_HISTORY_DAYS = 100
 
@@ -80,6 +81,7 @@ class PaperTrade:
     invested_amount: float
     pnl_rupees: float
     capital_after: float
+    chart_path: str
 
 
 def _call_with_retry(func, *args, **kwargs):
@@ -262,6 +264,25 @@ def run(
                 f"P&L Rs {pnl_rupees:,.2f} | capital Rs {capital:,.2f} -> Rs {new_capital:,.2f}"
             )
 
+            try:
+                chart_path = generate_trade_chart(
+                    kite,
+                    instrument["instrument_token"],
+                    tradingsymbol,
+                    signal.direction,
+                    entry_time,
+                    exit_time,
+                    entry_premium,
+                    exit_premium,
+                    exit_reason,
+                )
+                print(f"Saved trade chart -> {chart_path}")
+            except Exception as exc:
+                # Diagnostic nice-to-have, not core trading logic - never let a charting
+                # failure take down the trading loop.
+                print(f"Could not generate trade chart ({exc}) - continuing without it.")
+                chart_path = ""
+
             trade = PaperTrade(
                 date=entry_time.date().isoformat(),
                 signal_source=signal_source,
@@ -280,6 +301,7 @@ def run(
                 invested_amount=round(invested_amount, 2),
                 pnl_rupees=round(pnl_rupees, 2),
                 capital_after=round(new_capital, 2),
+                chart_path=str(chart_path),
             )
             out_path = _log_trade(trade)
             print(f"Logged trade -> {out_path}")

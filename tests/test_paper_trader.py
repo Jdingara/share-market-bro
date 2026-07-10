@@ -37,3 +37,13 @@ def test_custom_force_close_time():
     at_1430 = datetime(2026, 7, 7, 14, 30)
     early_cutoff = time(14, 0)
     assert check_exit_condition(100.0, 103.0, at_1430, force_close_time=early_cutoff) == "EOD_CLOSE"
+
+
+def test_stoploss_at_tightened_5pct_boundary():
+    # -5% is the current stop (tightened 2026-07-10 from -10%, target stays +10%) - confirms
+    # a drop that the old -10% rule would have ridden out now correctly stops early.
+    assert check_exit_condition(100.0, 95.0, BEFORE_CUTOFF) == "STOPLOSS"
+
+
+def test_no_stoploss_just_above_5pct_boundary():
+    assert check_exit_condition(100.0, 96.0, BEFORE_CUTOFF) is None

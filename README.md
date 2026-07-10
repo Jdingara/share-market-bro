@@ -79,6 +79,8 @@ py -m streamlit run src/dashboard.py
 ```
 Opens at `http://localhost:8501` (locked to your machine only, per `.streamlit/config.toml`). From here you can click **Start** to launch the paper trader in the background instead of running it from a terminal, watch its live log, and click **Stop** to end it early. Note: if you close the dashboard while the bot is running, the dashboard loses track of it (it keeps running in the background) — close it manually via Task Manager in that case.
 
+Each row in the trade log has a **"View Candle" button** — click it to see a 2-hour, 5-minute-candle chart of that trade's actual option premium (1 hour before/after entry), with entry and exit marked. Useful for eyeballing whether a stop-loss would have recovered, or a target exit left more upside on the table. Charts are generated automatically at trade-close time (`src/trade_chart.py`) and saved to `data/paper_trades/charts/` — this must happen soon after each trade, since Kite Connect permanently loses historical data once an option contract expires.
+
 ## Notes
 
 - Kite access tokens expire daily. `auth.py` automates the login (password + TOTP) since there's no official headless login API - this uses the same login steps Zerodha's own web login uses, automated via `requests`. It's a widely-used community pattern, not an officially documented API, so if it starts failing, Zerodha's login internals may have changed.

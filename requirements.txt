@@ -7,3 +7,5 @@ requests>=2.31.0
 streamlit>=1.38.0
 scikit-learn>=1.5.0
 xgboost>=2.0.0
+matplotlib>=3.9.0
+mplfinance>=0.12.10

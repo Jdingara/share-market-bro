@@ -187,7 +187,38 @@ def render_report(csv_path: Path, title: str, show_capital: bool = False) -> Non
             st.line_chart(equity.reset_index(drop=True))
 
         st.subheader("Trade log")
-        st.dataframe(trades, width="stretch")
+        display_trades = trades.reset_index(drop=True)
+        column_config = {}
+        column_order = None
+        button_key = f"view_chart_{title.lower().replace(' ', '_')}"
+        selected_state_key = f"{button_key}_selected"
+
+        if "chart_path" in display_trades.columns:
+            display_trades = display_trades.copy()
+            display_trades["view"] = display_trades["chart_path"].apply(
+                lambda p: ":material/visibility: View Candle" if p else ""
+            )
+
+            def _handle_view_click(key=button_key, sel_key=selected_state_key, df=display_trades):
+                click = st.session_state[key]
+                st.session_state[sel_key] = df.iloc[click["row"]]["chart_path"]
+
+            column_config["view"] = st.column_config.ButtonColumn(
+                "Candle Chart",
+                help="Click to view the 2-hour, 5-min candle chart of this trade's option premium around entry",
+                on_click=_handle_view_click,
+                key=button_key,
+            )
+            column_order = [c for c in display_trades.columns if c not in ("chart_path", "view")] + ["view"]
+
+        st.dataframe(display_trades, width="stretch", column_config=column_config, column_order=column_order)
+
+        selected_path = st.session_state.get(selected_state_key)
+        if selected_path:
+            if Path(selected_path).exists():
+                st.image(selected_path, caption=Path(selected_path).name)
+            else:
+                st.warning(f"Chart file not found: {selected_path}")
 
 
 # ---------- Layout ----------
