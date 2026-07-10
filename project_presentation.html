@@ -186,7 +186,7 @@
     <h2><span class="num">1</span> What is this project?</h2>
     <p class="lede">A computer program that trades on your behalf — but only when it finds a genuinely good opportunity, and never more than once a day.</p>
     <div class="card">
-      <p style="margin-top:0">Every trading day, from market open to close, the bot continuously reads live price data for the <strong>NIFTY 50 index</strong> and analyzes it using a mix of statistical rules and machine learning. When — and only when — it finds a setup it's genuinely confident about, it "buys" an option (a call if it expects prices to rise, a put if it expects them to fall), then automatically exits at a fixed <strong>+10% profit target</strong> or a <strong>-10% loss limit</strong>, whichever comes first.</p>
+      <p style="margin-top:0">Every trading day, from market open to close, the bot continuously reads live price data for the <strong>NIFTY 50 index</strong> and analyzes it using a mix of statistical rules and machine learning. When — and only when — it finds a setup it's genuinely confident about, it "buys" an option (a call if it expects prices to rise, a put if it expects them to fall), then automatically exits at a fixed <strong>+10% profit target</strong> or a <strong>-5% loss limit</strong>, whichever comes first.</p>
       <p style="margin-bottom:0">Right now, everything runs on <strong>simulated ("paper") money</strong> — real market prices, real decisions, zero real financial risk — so the strategy can be proven before it's trusted with actual capital.</p>
     </div>
   </div>
@@ -200,7 +200,7 @@
       <div class="card"><strong>9:15 AM</strong><p style="color:var(--muted); margin:8px 0 0; font-size:14px">Logs into the trading account automatically — no manual steps.</p></div>
       <div class="card"><strong>All day</strong><p style="color:var(--muted); margin:8px 0 0; font-size:14px">Watches live prices, checking every minute for a high-confidence setup.</p></div>
       <div class="card"><strong>If found</strong><p style="color:var(--muted); margin:8px 0 0; font-size:14px">Picks the right option (call or put), enters at the real market price.</p></div>
-      <div class="card"><strong>Then</strong><p style="color:var(--muted); margin:8px 0 0; font-size:14px">Watches that position closely, exits automatically at +10% or -10%.</p></div>
+      <div class="card"><strong>Then</strong><p style="color:var(--muted); margin:8px 0 0; font-size:14px">Watches that position closely, exits automatically at +10% or -5%.</p></div>
       <div class="card"><strong>Done for the day</strong><p style="color:var(--muted); margin:8px 0 0; font-size:14px">Win or lose, it stops. No second trade, no chasing losses.</p></div>
       <div class="card"><strong>If nothing found</strong><p style="color:var(--muted); margin:8px 0 0; font-size:14px">It does nothing. A quiet day is a normal, expected outcome — not a failure.</p></div>
     </div>
@@ -378,6 +378,8 @@
 
     <div class="callout warn" style="margin-top:20px">
       <strong>Honest read:</strong> These numbers already survived one real correction — an expiry-date bug initially made results look better than they should have; after fixing it and retraining, XGBoost still won, just by a smaller margin. That's a good sign the result is real, not a fluke, but it's still one backtest window plus one live trade — encouraging, not proven. The next few days of live paper trading (with more trade opportunities enabled for faster validation) will tell us a lot more.
+      <br><br>
+      <strong>Note on the bracket used:</strong> the table above was measured with the original <strong>+10%/-10%</strong> bracket. Live paper trading has since moved to a tightened <strong>+10%/-5%</strong> stop (2026-07-10), based on real evidence from actual paper trades - see Section 9. That means live results going forward won't exactly match this backtest table, since it's now running a different rule than what was measured here.
     </div>
   </div>
 </section>
@@ -403,21 +405,23 @@
       </div>
       <div class="card" style="border-color: rgba(51,201,163,0.4)">
         <h3 style="margin-top:0; color:var(--accent)">✅ A realistic scenario (using our actual measured ~60% win rate)</h3>
-        <p style="color:var(--muted); font-size:13px">Wins and losses both happen. At 60% wins / 40% losses on a +10%/-10% bracket, the honest average works out to about <strong>+2% per trade</strong> (0.6×10% − 0.4×10%) — modest, but real.</p>
+        <p style="color:var(--muted); font-size:13px">Wins and losses both happen. At 60% wins / 40% losses on the current <strong>+10% target / -5% stop</strong> bracket (tightened from -10% on 2026-07-10, after real evidence showed it performs better), the honest average works out to about <strong>+4% per trade</strong> (0.6×10% − 0.4×5%) — double the old symmetric-bracket estimate, though still an illustration, not a promise (the tighter stop can also cut off a few trades early that would have recovered - see caveat below).</p>
         <table>
-          <tr><th>Trade #</th><th>Capital</th><th>Lots</th></tr>
-          <tr><td>1</td><td>₹20,400</td><td>1</td></tr>
-          <tr><td>10</td><td>₹24,380</td><td>1</td></tr>
-          <tr><td>25</td><td>₹32,812</td><td>1</td></tr>
-          <tr><td>50</td><td>₹53,832</td><td>3</td></tr>
-          <tr><td>100</td><td>₹1,44,893</td><td>8</td></tr>
+          <tr><th>Trade #</th><th>Capital (with cap)</th><th>Lots</th></tr>
+          <tr><td>1</td><td>₹20,800</td><td>1</td></tr>
+          <tr><td>10</td><td>₹29,605</td><td>1</td></tr>
+          <tr><td>25</td><td>₹53,317</td><td>3</td></tr>
+          <tr><td>50</td><td>₹1,42,134</td><td>8</td></tr>
+          <tr><td>100</td><td>₹5,30,301</td><td class="highlight">11 (capped)</td></tr>
         </table>
-        <p style="color:var(--muted); font-size:12.5px; margin-bottom:0">Roughly 7× the starting capital over 100 trades — genuinely good, and believable. This path never even gets close to the ₹2,00,000 cap — it exists as a backstop for a much luckier streak than we actually expect, not a wall we plan on hitting.</p>
+        <p style="color:var(--muted); font-size:12.5px; margin-bottom:0">This path now does reach the ₹2,00,000 per-trade cap by trade 100 (unlike the old +2%/trade estimate, which stayed well under it) - <strong>without the cap</strong>, this same math would reach ₹10.1 lakh by trade 100; with it, growth slows to ₹5.3 lakh since only ₹2,00,000 gets deployed per trade no matter how large the total balance grows, exactly as designed.</p>
       </div>
     </div>
 
     <div class="callout warn" style="margin-top:20px">
       <strong>This is not a promise or a guarantee — it's a planning illustration.</strong> Real results depend entirely on whether the live win rate actually holds up (which is exactly what the next few days/weeks of paper trading will tell us). Losses will happen along the way, sometimes several in a row, and can just as easily shrink the lot count back down as grow it. The "realistic" table above is our best honest estimate today, built from real measured numbers, not a target we're chasing at any cost. Separately, the ₹2,00,000 per-trade cap is a hard ceiling that applies no matter which scenario plays out — it bounds the worst case forever, even in a future none of today's numbers anticipate.
+      <br><br>
+      <strong>On the tighter -5% stop specifically:</strong> it isn't a free upgrade. A tighter stop can occasionally exit a trade slightly early on a dip that would have gone on to recover and hit the full +10% target - real testing on 25 live trades found this happened 3 times. It still came out clearly ahead overall (roughly double the P&L of the old -10% stop, on the same real trades) because cutting the size of confirmed losses mattered more than the few early exits cost - but it's a genuine trade-off, not a guaranteed win in every scenario.
     </div>
   </div>
 </section>
@@ -428,7 +432,7 @@
     <div class="card">
       <ul class="check">
         <li>Maximum <strong>one trade per day</strong> — no exceptions, no chasing losses</li>
-        <li>Automatic <strong>+10% profit target</strong> and <strong>-10% stop-loss</strong> on every trade</li>
+        <li>Automatic <strong>+10% profit target</strong> and <strong>-5% stop-loss</strong> on every trade (tightened from -10% on 2026-07-10, after real evidence showed it performs better)</li>
         <li>Will do <strong>nothing at all</strong> on days with no genuinely good setup — never forces a trade</li>
         <li>Fully tested on <strong>132 days of real historical data</strong> before going live with even fake money</li>
         <li>Currently running on <strong>simulated money only</strong> — real prices, zero real financial risk</li>
