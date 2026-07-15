@@ -58,9 +58,18 @@ Add `--max-trades-per-day N` (default **1**, the intended discipline) to allow m
 
 Add `--max-capital-per-trade N` (default **₹2,00,000**) to cap how much of the balance is ever risked on a single trade, no matter how large the account has compounded to - anything above the cap simply stays idle/untouched. **Also available directly on the dashboard** (a "Max capital per trade (Rs)" box next to the Start button).
 
+Add `--put-only` to skip CALL signals entirely (PUT trades only) - off by default, available if CALL's precision needs excluding again. **Also available on the dashboard** ("PUT only" checkbox).
+
+By default, the bot can't generate any signal for the first ~4 hours after market open (RSI needs 16 candles' worth of history) - but a second model trained specifically on 5-minute candles (`gradient_boosting` signal source only) kicks in automatically until then, letting it signal from as early as ~1h20m after open instead. No flag needed - this is automatic once the 5-min model is trained (see below).
+
 **Train the ML signal engine** (labels historical candles, trains all 3 model types - Random Forest, Logistic Regression, Gradient Boosting - with calibrated thresholds, saves to `data/models/`):
 ```
 py src/ml_signal.py
+```
+
+**Train the early-session (5-minute candle) model** (lets `gradient_boosting` signal earlier in the day - see above; needs `data/historical/NIFTY_50_5minute.csv`, fetch it first via `py src/data_fetch.py --interval 5minute --days 210`):
+```
+py src/train_5min_model.py
 ```
 
 **Compare the ML signal against the rule-based one** (honest side-by-side on the same held-out test period):

@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from paper_trader import check_exit_condition
+from paper_trader import MIN_CANDLES_FOR_SIGNAL, _build_early_session_signal_fn, check_exit_condition
 
 BEFORE_CUTOFF = datetime(2026, 7, 7, 13, 0)
 AFTER_CUTOFF = datetime(2026, 7, 7, 15, 26)
@@ -47,3 +47,21 @@ def test_stoploss_at_tightened_5pct_boundary():
 
 def test_no_stoploss_just_above_5pct_boundary():
     assert check_exit_condition(100.0, 96.0, BEFORE_CUTOFF) is None
+
+
+def test_min_candles_for_signal_matches_rsi_warmup():
+    # RSI_PERIOD (14) + RSI_TURN_LOOKBACK (2) - the hard floor before any
+    # signal (rule-based or ML) can be computed at all, regardless of confidence.
+    assert MIN_CANDLES_FOR_SIGNAL == 16
+
+
+def test_no_early_session_model_for_non_gradient_boosting_sources():
+    # Only gradient_boosting has a trained 5-min counterpart (train_5min_model.py) -
+    # everything else should behave exactly as before (no early-session fallback).
+    assert _build_early_session_signal_fn("rule_based") is None
+    assert _build_early_session_signal_fn("random_forest") is None
+    assert _build_early_session_signal_fn("logistic_regression") is None
+
+
+def test_early_session_model_available_for_gradient_boosting():
+    assert _build_early_session_signal_fn("gradient_boosting") is not None

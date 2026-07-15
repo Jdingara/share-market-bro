@@ -169,6 +169,62 @@
     header.hero { padding: 48px 0 40px; }
     section { padding: 40px 0; }
   }
+
+  @media print {
+    @page { margin: 1.5cm; }
+
+    :root {
+      --bg: #ffffff;
+      --panel: #ffffff;
+      --panel-2: #f2f5f9;
+      --border: #cbd3e0;
+      --text: #14181f;
+      --muted: #48505e;
+      --accent: #0e7a5c;
+      --accent-2: #2450bf;
+      --warn: #93590a;
+      --danger: #a83c3c;
+    }
+
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+    body { background: #fff; color: var(--text); }
+
+    header.hero {
+      background: #fff;
+      border-bottom: 2px solid var(--border);
+      padding: 32px 0 28px;
+    }
+    header.hero .tag { background: #e8f6f1; }
+
+    section { padding: 28px 0; }
+
+    .card, .stat, .step .content {
+      background: #fff;
+      box-shadow: none;
+      border: 1px solid var(--border);
+      break-inside: avoid;
+    }
+    .stat, .step, tr { break-inside: avoid; }
+    table { break-inside: auto; }
+    thead { display: table-header-group; }
+
+    .step .dot { background: #fff; }
+
+    .pill { background: var(--panel-2); color: var(--text); }
+
+    .status.done { background: #e8f6f1; border: 1px solid var(--accent); }
+    .status.progress { background: #fbeed9; border: 1px solid var(--warn); }
+
+    .callout {
+      background: #eef3ff;
+      border: 1px solid var(--accent-2);
+      border-left: 4px solid var(--accent-2);
+    }
+    .callout.warn { background: #fdf5e8; border-color: var(--warn); border-left-color: var(--warn); }
+
+    a { color: var(--accent-2); }
+  }
 </style>
 </head>
 <body>

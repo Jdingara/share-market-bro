@@ -37,11 +37,20 @@ from data_fetch import fetch_historical_data, get_instrument_token
 from ml_signal import MODEL_TYPES, generate_ml_signal, load_models
 from option_lookup import find_nearest_valid_expiry, find_option_instrument, get_option_premium
 from options_pricing import nearest_strike
-from signal_engine import generate_signal
+from signal_engine import RSI_PERIOD, RSI_TURN_LOOKBACK, generate_signal
 from trade_chart import generate_trade_chart
+from train_5min_model import MODEL_TYPE_5MIN
 
 SIGNAL_SOURCES = ["rule_based"] + MODEL_TYPES
 DEFAULT_SIGNAL_SOURCE = "gradient_boosting"  # strongest candidate in the Phase 6 comparison (77.1% win rate, +5.45% avg)
+
+# generate_ml_signal/generate_signal both need this many candles before RSI (and
+# the "did RSI just turn" check) is even computable - a hard floor, not a
+# confidence issue. At 15-minute candles that's a 4-hour wait from market open
+# (confirmed against every real trading day: no signal has ever fired before
+# ~13:15). The early-session 5-minute model (train_5min_model.py) exists to
+# shrink that same candle-count floor down to ~1h20m in wall-clock time.
+MIN_CANDLES_FOR_SIGNAL = RSI_PERIOD + RSI_TURN_LOOKBACK
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PAPER_TRADES_DIR = PROJECT_ROOT / "data" / "paper_trades"
@@ -132,6 +141,11 @@ def _fetch_today_intraday(kite, nifty_token: int) -> pd.DataFrame:
     return fetch_historical_data(kite, nifty_token, today, today, "15minute")
 
 
+def _fetch_today_intraday_5min(kite, nifty_token: int) -> pd.DataFrame:
+    today = date.today()
+    return fetch_historical_data(kite, nifty_token, today, today, "5minute")
+
+
 def _fetch_prior_daily(kite, nifty_token: int) -> pd.DataFrame:
     today = date.today()
     from_date = today - timedelta(days=DAILY_HISTORY_DAYS)
@@ -153,11 +167,27 @@ def _build_signal_fn(signal_source: str):
     )
 
 
+def _build_early_session_signal_fn(signal_source: str):
+    """5-minute-candle model, used only until enough 15-minute candles exist for
+    the primary model (see MIN_CANDLES_FOR_SIGNAL). Only trained for the
+    gradient_boosting model type so far - returns None for anything else, in
+    which case the early-morning wait behaves exactly as it did before."""
+    if signal_source != "gradient_boosting":
+        return None
+    call_model, put_model, call_threshold, put_threshold = load_models(MODEL_TYPE_5MIN)
+    return partial(
+        generate_ml_signal,
+        call_model=call_model, put_model=put_model,
+        call_threshold=call_threshold, put_threshold=put_threshold,
+    )
+
+
 def run(
     max_minutes: Optional[int] = None,
     signal_source: str = DEFAULT_SIGNAL_SOURCE,
     max_trades_per_day: int = 1,
     max_capital_per_trade: float = MAX_CAPITAL_PER_TRADE,
+    put_only: bool = False,
 ) -> None:
     print(f"Signal source for today: {signal_source}")
     if max_trades_per_day != 1:
@@ -166,7 +196,16 @@ def run(
             "fast-validation setting, not the intended live-trading discipline. Switch back to 1 "
             "once enough data has been gathered."
         )
+    if put_only:
+        print(
+            "NOTE: put_only=True - CALL signals are being skipped this run. The CALL side of this model "
+            "has shown weaker precision than PUT's in both backtest and live results, but both directions "
+            "remain in scope by default - this is an explicit override, not the standing behavior."
+        )
     signal_fn = _build_signal_fn(signal_source)
+    early_signal_fn = _build_early_session_signal_fn(signal_source)
+    if early_signal_fn is not None:
+        print("Early-session (5-min candle) model loaded - can signal from ~1h20m after open instead of ~4h.")
 
     kite = _call_with_retry(login)
     nifty_token = _call_with_retry(get_instrument_token, kite, "NIFTY 50", "NSE")
@@ -206,9 +245,28 @@ def run(
                 time_module.sleep(SIGNAL_POLL_INTERVAL_SECONDS)
                 continue
 
-            signal = signal_fn(daily_df, intraday_df)
+            if len(intraday_df) >= MIN_CANDLES_FOR_SIGNAL or early_signal_fn is None:
+                signal = signal_fn(daily_df, intraday_df)
+            else:
+                # Not enough 15-min candles yet for the primary model - try the
+                # 5-min early-session model instead, so a real morning setup
+                # isn't missed for hours purely due to the candle-count floor.
+                intraday_5min_df = _call_with_retry(_fetch_today_intraday_5min, kite, nifty_token)
+                if len(intraday_5min_df) < MIN_CANDLES_FOR_SIGNAL:
+                    print(f"[{now.time()}] Not enough candles yet for even the early-session model, waiting...")
+                    time_module.sleep(SIGNAL_POLL_INTERVAL_SECONDS)
+                    continue
+                signal = early_signal_fn(daily_df, intraday_5min_df)
+                if signal.direction != "NO_TRADE":
+                    signal.reasoning = f"[early-session 5-min model] {signal.reasoning}"
+
             if signal.direction == "NO_TRADE":
                 print(f"[{now.time()}] No signal yet. {signal.reasoning}")
+                time_module.sleep(SIGNAL_POLL_INTERVAL_SECONDS)
+                continue
+
+            if put_only and signal.direction == "CALL":
+                print(f"[{now.time()}] CALL signal skipped (put_only mode): {signal.reasoning}")
                 time_module.sleep(SIGNAL_POLL_INTERVAL_SECONDS)
                 continue
 
@@ -328,10 +386,15 @@ if __name__ == "__main__":
     parser.add_argument("--max-capital-per-trade", type=float, default=MAX_CAPITAL_PER_TRADE,
                          help=f"Never deploy more than this much of the balance on one trade "
                               f"(default: Rs {MAX_CAPITAL_PER_TRADE:,.2f}). Excess balance stays idle.")
+    parser.add_argument("--put-only", action="store_true",
+                         help="Skip CALL signals entirely, only trade PUT (default: off, both directions "
+                              "allowed). CALL's confidence hasn't tracked real accuracy as well as PUT's in "
+                              "backtest or live results - available as an option, not the default.")
     args = parser.parse_args()
     run(
         max_minutes=args.max_minutes,
         signal_source=args.signal_source,
         max_trades_per_day=args.max_trades_per_day,
         max_capital_per_trade=args.max_capital_per_trade,
+        put_only=args.put_only,
     )
