@@ -8,7 +8,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from option_lookup import OptionLookupError, find_nearest_valid_expiry, find_option_instrument
+from option_lookup import (
+    OptionLookupError,
+    compute_max_pain_from_oi,
+    find_nearest_valid_expiry,
+    find_option_instrument,
+)
 
 FAKE_INSTRUMENTS = [
     {"name": "NIFTY", "segment": "NFO-OPT", "strike": 24000.0, "expiry": date(2026, 7, 16), "instrument_type": "CE",
@@ -64,3 +69,29 @@ def test_find_nearest_valid_expiry_ignores_other_underlyings():
 def test_find_nearest_valid_expiry_raises_when_none_far_enough():
     with pytest.raises(OptionLookupError):
         find_nearest_valid_expiry(FAKE_MULTI_EXPIRY_INSTRUMENTS, as_of_date=date(2026, 7, 7), min_days=30)
+
+
+def test_compute_max_pain_from_oi_pulls_toward_heavy_put_oi():
+    # Heavy PE open interest sits at 120 - if price expires there, that PE pays out
+    # nothing, so 120 should minimize total payout (i.e. be Max Pain).
+    oi = {
+        (100.0, "PE"): 0, (110.0, "PE"): 0, (120.0, "PE"): 1000,
+        (100.0, "CE"): 0, (110.0, "CE"): 0, (120.0, "CE"): 0,
+    }
+    assert compute_max_pain_from_oi(oi) == 120.0
+
+
+def test_compute_max_pain_from_oi_balances_calls_and_puts():
+    # Equal, heavy CE and PE open interest both sit at 100 - that's the one strike
+    # where both sides expire worthless simultaneously, so it minimizes combined payout.
+    oi = {
+        (90.0, "CE"): 0, (90.0, "PE"): 0,
+        (100.0, "CE"): 1000, (100.0, "PE"): 1000,
+        (110.0, "CE"): 0, (110.0, "PE"): 0,
+    }
+    assert compute_max_pain_from_oi(oi) == 100.0
+
+
+def test_compute_max_pain_from_oi_raises_on_empty_input():
+    with pytest.raises(OptionLookupError):
+        compute_max_pain_from_oi({})

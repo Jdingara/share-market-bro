@@ -8,7 +8,7 @@ Autonomous NIFTY 50 options trading bot, built in phases:
 1. Historical data pipeline — **done**
 2. Rule-based signal engine (EMA trend + Fibonacci + RSI + candlestick confluence) — **done**
 3. Backtesting engine — **done** (see `PROJECT_STATUS.md` for the current result)
-4. Paper trading engine — **done, built and smoke-tested; not yet run for a full trading day**
+4. Paper trading engine — **done, running live during real market hours across multiple real trading days now (see `PROJECT_STATUS.md` for results)**
 5. Live trading — not started
 6. ML enhancement — **done, built and honestly compared against the rule-based engine (see `PROJECT_STATUS.md`); Gradient Boosting (XGBoost) is now the live paper-trading default**
 
@@ -58,9 +58,13 @@ Add `--max-trades-per-day N` (default **1**, the intended discipline) to allow m
 
 Add `--max-capital-per-trade N` (default **₹2,00,000**) to cap how much of the balance is ever risked on a single trade, no matter how large the account has compounded to - anything above the cap simply stays idle/untouched. **Also available directly on the dashboard** (a "Max capital per trade (Rs)" box next to the Start button).
 
-Add `--put-only` to skip CALL signals entirely (PUT trades only) - off by default, available if CALL's precision needs excluding again. **Also available on the dashboard** ("PUT only" checkbox).
+Add `--put-only` to skip CALL signals entirely (PUT trades only) - off by default (both directions are live by default), available if CALL's precision needs excluding again. **Also available on the dashboard** ("PUT only (skip CALL signals)" checkbox, unchecked by default).
+
+Add `--split-session` to use two independent trade quotas instead of one flat daily cap: up to `--max-trades-per-session N` (default **6**) trades before 1:15 PM (morning, early-session model), then up to N more from 1:15 PM onward (afternoon, primary model) - up to 2N trades/day total. If the morning quota fills before 1:15, new entries pause (not end the day) until the afternoon quota opens. Overrides `--max-trades-per-day` when set. **Also available on the dashboard** ("Split into morning/afternoon sessions" checkbox).
 
 By default, the bot can't generate any signal for the first ~4 hours after market open (RSI needs 16 candles' worth of history) - but a second model trained specifically on 5-minute candles (`gradient_boosting` signal source only) kicks in automatically until then, letting it signal from as early as ~1h20m after open instead. No flag needed - this is automatic once the 5-min model is trained (see below).
+
+Every real trade also gets a **Max Pain / Open Interest check logged alongside it, in shadow mode** - it does not affect trading decisions yet, purely diagnostic (see `PROJECT_STATUS.md` for the full plan). Computes the strike that would minimize total payout to option holders for that trade's expiry (`src/option_lookup.py`'s `compute_max_pain()`, using real Open Interest via `kite.quote()`), and logs whether it agrees with the signal's direction as two extra columns in `paper_trades.csv`: `max_pain_strike`, `max_pain_agreed`.
 
 **Train the ML signal engine** (labels historical candles, trains all 3 model types - Random Forest, Logistic Regression, Gradient Boosting - with calibrated thresholds, saves to `data/models/`):
 ```
@@ -82,13 +86,17 @@ py tests/compare_ml_vs_rules.py
 py -m pytest tests/ -v
 ```
 
-**Open the dashboard** (a local webpage with a Start/Stop control for the bot, plus backtest and paper-trading reports — trade log, win rate, P&L, equity curve):
+**Open the dashboard** (a local webpage with a Start/Stop control for the bot, plus backtest, paper-trading, and daily-summary reports — trade log, win rate, P&L, equity curve):
 ```
 py -m streamlit run src/dashboard.py
 ```
 Opens at `http://localhost:8501` (locked to your machine only, per `.streamlit/config.toml`). From here you can click **Start** to launch the paper trader in the background instead of running it from a terminal, watch its live log, and click **Stop** to end it early. Note: if you close the dashboard while the bot is running, the dashboard loses track of it (it keeps running in the background) — close it manually via Task Manager in that case.
 
+Three tabs: **Backtest Results**, **Paper Trading Results**, and **Daily Summary** (a per-day win/loss/P&L breakdown, including real Zerodha brokerage + Kite subscription costs netted out - not just the gross figure). The Daily Summary tab has a **Period filter** (All time / This month / Custom range) so you can pull up a report for just a specific window instead of always seeing every day.
+
 Each row in the trade log has a **"View Candle" button** — click it to see a 2-hour, 5-minute-candle chart of that trade's actual option premium (1 hour before/after entry), with entry and exit marked. Useful for eyeballing whether a stop-loss would have recovered, or a target exit left more upside on the table. Charts are generated automatically at trade-close time (`src/trade_chart.py`) and saved to `data/paper_trades/charts/` — this must happen soon after each trade, since Kite Connect permanently loses historical data once an option contract expires.
+
+Every table also has a **"Download as PDF" button** next to Streamlit's built-in "Download as CSV" one, for a printable version of the same report.
 
 ## Notes
 

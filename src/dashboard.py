@@ -9,13 +9,15 @@ Run with: py -m streamlit run src/dashboard.py
 
 from __future__ import annotations
 
+import io
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import altair as alt
+import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
@@ -104,6 +106,8 @@ def start_bot(
     max_trades_per_day: int = 1,
     max_capital_per_trade: float = MAX_CAPITAL_PER_TRADE,
     put_only: bool = False,
+    split_session: bool = False,
+    max_trades_per_session: int = 6,
 ) -> None:
     LIVE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     log_fh = open(LIVE_LOG_PATH, "w")
@@ -114,6 +118,8 @@ def start_bot(
     ]
     if put_only:
         cmd.append("--put-only")
+    if split_session:
+        cmd += ["--split-session", "--max-trades-per-session", str(max_trades_per_session)]
     process = subprocess.Popen(
         # -u: unbuffered, so the log file updates live, not just at exit
         cmd,
@@ -127,6 +133,8 @@ def start_bot(
     st.session_state.bot_max_trades = max_trades_per_day
     st.session_state.bot_put_only = put_only
     st.session_state.bot_max_capital_per_trade = max_capital_per_trade
+    st.session_state.bot_split_session = split_session
+    st.session_state.bot_max_trades_per_session = max_trades_per_session
 
 
 def stop_bot() -> None:
@@ -140,7 +148,7 @@ def stop_bot() -> None:
     st.session_state.bot_log_fh = None
 
 
-def render_bot_control() -> None:
+def render_bot_control() -> bool:
     process = st.session_state.get("bot_process")
     is_running = process is not None and process.poll() is None
 
@@ -161,19 +169,43 @@ def render_bot_control() -> None:
                 unsafe_allow_html=True,
             )
 
-        max_trades = st.number_input(
-            "Max trades per day",
-            min_value=1, max_value=999, value=1, step=1,
+        split_session_mode = st.checkbox(
+            "Split into morning/afternoon sessions",
+            value=False,
             disabled=is_running,
             help=(
-                "Default 1 is the intended everyday discipline. Set much higher (e.g. 999) to remove the "
-                "cap entirely for a validation stretch - every trade still has to independently clear the "
-                "same confidence bar, nothing is ever forced, so the real number of trades taken is however "
-                "many genuine signals actually show up, not this number. Switch back to 1 once you've seen enough."
+                "Instead of one flat daily cap, use two independent quotas: up to N trades before 1:15 PM "
+                "(morning, early-session 5-min model) and up to N more from 1:15 PM onward (afternoon, "
+                "primary 15-min model) - up to 2N trades total. If the morning quota fills before 1:15, new "
+                "entries pause until the afternoon quota opens rather than ending the day. Added 2026-07-16 "
+                "based on morning trades looking better than later-day ones so far - still an early idea, "
+                "not yet proven over many days."
             ),
         )
-        if max_trades != 1:
-            st.warning(f"Set to {int(max_trades)} - remember to set this back to 1 once you're done validating.")
+
+        if split_session_mode:
+            max_trades_per_session = st.number_input(
+                "Trades per session (morning / afternoon)",
+                min_value=1, max_value=50, value=6, step=1,
+                disabled=is_running,
+                help="Cap for EACH session - morning and afternoon each get this many, so the real daily max is double this number.",
+            )
+            max_trades = 1  # unused in split-session mode, kept for start_bot()'s shared signature
+        else:
+            max_trades_per_session = 6  # unused in flat mode, kept for start_bot()'s shared signature
+            max_trades = st.number_input(
+                "Max trades per day",
+                min_value=1, max_value=999, value=1, step=1,
+                disabled=is_running,
+                help=(
+                    "Default 1 is the intended everyday discipline. Set much higher (e.g. 999) to remove the "
+                    "cap entirely for a validation stretch - every trade still has to independently clear the "
+                    "same confidence bar, nothing is ever forced, so the real number of trades taken is however "
+                    "many genuine signals actually show up, not this number. Switch back to 1 once you've seen enough."
+                ),
+            )
+            if max_trades != 1:
+                st.warning(f"Set to {int(max_trades)} - remember to set this back to 1 once you're done validating.")
 
         max_capital = st.number_input(
             "Max capital per trade (Rs)",
@@ -206,6 +238,8 @@ def render_bot_control() -> None:
                     max_trades_per_day=int(max_trades),
                     max_capital_per_trade=float(max_capital),
                     put_only=put_only_mode,
+                    split_session=split_session_mode,
+                    max_trades_per_session=int(max_trades_per_session),
                 )
                 st.rerun()
         with col2:
@@ -214,7 +248,11 @@ def render_bot_control() -> None:
                 st.rerun()
         with col3:
             if is_running:
-                trades_note = f" · max {st.session_state.bot_max_trades} trades/day" if st.session_state.get("bot_max_trades", 1) != 1 else ""
+                if st.session_state.get("bot_split_session", False):
+                    n = st.session_state.get("bot_max_trades_per_session", 6)
+                    trades_note = f" · up to {n}+{n} trades (morning+afternoon)"
+                else:
+                    trades_note = f" · max {st.session_state.bot_max_trades} trades/day" if st.session_state.get("bot_max_trades", 1) != 1 else ""
                 cap = st.session_state.get("bot_max_capital_per_trade", MAX_CAPITAL_PER_TRADE)
                 capital_note = f" · cap Rs {cap:,.0f}/trade" if cap != MAX_CAPITAL_PER_TRADE else ""
                 calls_note = " · PUT only" if st.session_state.get("bot_put_only", False) else ""
@@ -233,11 +271,9 @@ def render_bot_control() -> None:
             else:
                 st.caption("No log yet - start the bot to see live progress here.")
 
-            auto_refresh = st.checkbox("Auto-refresh every 10 seconds", value=False)
-            st.button("Refresh now")
-            if auto_refresh:
-                time.sleep(10)
-                st.rerun()
+            auto_refresh = st.checkbox("Auto-refresh every 10 seconds", value=True)
+
+    return auto_refresh
 
 
 # ---------- Reports ----------
@@ -329,6 +365,37 @@ def render_daily_pnl_chart(trades: pd.DataFrame) -> None:
     st.altair_chart((bars + rule).properties(height=220), width="stretch", theme=None)
 
 
+@st.cache_data(show_spinner=False)
+def dataframe_to_pdf_bytes(df: pd.DataFrame, title: str) -> bytes:
+    """Renders a table to a printable PDF page via matplotlib (already a project
+    dependency - no new library needed, unlike weasyprint/reportlab which would
+    need extra system setup on the user's machine). Cached on the table's actual
+    content - with auto-refresh reruning this every 10s, an uncached version would
+    rebuild the PDF from scratch on every tick even when no new trade has happened;
+    this way it only actually re-renders when the underlying data changes (a real
+    project-day case: a growing 80+ row trade log made the uncached version
+    noticeably slow on every single rerun, not just when downloading)."""
+    display_df = df.fillna("")
+    row_height = 0.3
+    fig_height = max(2.0, row_height * (len(display_df) + 2))
+    fig, ax = plt.subplots(figsize=(11.7, fig_height))  # landscape A4 width
+    ax.axis("off")
+    ax.set_title(title, fontsize=13, fontweight="bold", pad=14)
+    table = ax.table(
+        cellText=display_df.values.astype(str),
+        colLabels=display_df.columns,
+        loc="center",
+        cellLoc="center",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(7)
+    table.scale(1, 1.3)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="pdf", bbox_inches="tight")
+    plt.close(fig)
+    return buf.getvalue()
+
+
 def render_report(csv_path: Path, title: str, show_capital: bool = False) -> None:
     df = load_trades(csv_path)
     if df.empty:
@@ -379,20 +446,10 @@ def render_report(csv_path: Path, title: str, show_capital: bool = False) -> Non
             column_config["P&L %"] = st.column_config.NumberColumn("P&L %", format="%.2f%%")
             hidden_columns.append("pct_change")
 
-        if "chart_path" in display_trades.columns:
+        has_chart_column = "chart_path" in display_trades.columns
+        if has_chart_column:
             display_trades["view"] = display_trades["chart_path"].apply(
                 lambda p: ":material/visibility: View Candle" if p else ""
-            )
-
-            def _handle_view_click(key=button_key, sel_key=selected_state_key, df=display_trades):
-                click = st.session_state[key]
-                st.session_state[sel_key] = df.iloc[click["row"]]["chart_path"]
-
-            column_config["view"] = st.column_config.ButtonColumn(
-                "Candle Chart",
-                help="Click to view the 2-hour, 5-min candle chart of this trade's option premium around entry",
-                on_click=_handle_view_click,
-                key=button_key,
             )
             hidden_columns.append("chart_path")
 
@@ -444,7 +501,32 @@ def render_report(csv_path: Path, title: str, show_capital: bool = False) -> Non
                     grouped_rows.append(pd.DataFrame([net_row]))
             display_trades = pd.concat(grouped_rows, ignore_index=True)
 
+        if has_chart_column:
+            # Bind the click handler to the FINAL display_trades (post day-grouping,
+            # same object st.dataframe below actually renders) - click["row"] is a
+            # position in that final table, and indexing into an earlier, shorter
+            # pre-grouping version was a real bug (wrong/out-of-bounds rows once
+            # TOTAL/NET summary rows shifted everything after them).
+            def _handle_view_click(key=button_key, sel_key=selected_state_key, df=display_trades):
+                click = st.session_state[key]
+                st.session_state[sel_key] = df.iloc[click["row"]]["chart_path"]
+
+            column_config["view"] = st.column_config.ButtonColumn(
+                "Candle Chart",
+                help="Click to view the 2-hour, 5-min candle chart of this trade's option premium around entry",
+                on_click=_handle_view_click,
+                key=button_key,
+            )
+
         st.dataframe(display_trades, width="stretch", column_config=column_config, column_order=column_order)
+
+        pdf_source = display_trades[column_order] if column_order else display_trades
+        pdf_source = pdf_source.drop(columns=["view"], errors="ignore")
+        st.download_button(
+            "\U0001F5A8 Download as PDF", data=dataframe_to_pdf_bytes(pdf_source, title),
+            file_name=f"{title.replace(' ', '_').lower()}.pdf", mime="application/pdf",
+            key=f"pdf_{title}",
+        )
 
         selected_path = st.session_state.get(selected_state_key)
         if selected_path:
@@ -462,6 +544,30 @@ def render_daily_summary(csv_path: Path) -> None:
     trades = df[df["direction"] != "NO_TRADE"] if "direction" in df.columns and (df["direction"] == "NO_TRADE").any() else df
     if trades.empty or "date" not in trades.columns:
         st.info("No trades yet.")
+        return
+
+    # Filter by a separate parsed series, not the "date" column itself - it stays
+    # in its original string form for the chart/table code below, unchanged.
+    date_series = pd.to_datetime(trades["date"]).dt.date
+    min_date, max_date = date_series.min(), date_series.max()
+
+    period = st.radio(
+        "Period", ["All time", "This month", "Custom range"],
+        horizontal=True, key="daily_summary_period",
+    )
+    if period == "This month":
+        today = date.today()
+        start_date, end_date = today.replace(day=1), today
+    elif period == "Custom range":
+        col1, col2 = st.columns(2)
+        start_date = col1.date_input("From", value=min_date, min_value=min_date, max_value=max_date, key="daily_summary_from")
+        end_date = col2.date_input("To", value=max_date, min_value=min_date, max_value=max_date, key="daily_summary_to")
+    else:
+        start_date, end_date = min_date, max_date
+
+    trades = trades[(date_series >= start_date) & (date_series <= end_date)]
+    if trades.empty:
+        st.info("No trades in the selected period.")
         return
 
     has_rupees = "pnl_rupees" in trades.columns
@@ -506,6 +612,11 @@ def render_daily_summary(csv_path: Path) -> None:
 
     st.subheader("Per-day breakdown")
     st.dataframe(summary_df, width="stretch", hide_index=True)
+    st.download_button(
+        "\U0001F5A8 Download as PDF", data=dataframe_to_pdf_bytes(summary_df, "Daily Summary"),
+        file_name=f"daily_summary_{start_date}_to_{end_date}.pdf", mime="application/pdf",
+        key="pdf_daily_summary",
+    )
 
     if has_rupees:
         total_gross = trades["pnl_rupees"].sum()
@@ -535,7 +646,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-render_bot_control()
+auto_refresh = render_bot_control()
 
 st.divider()
 
@@ -546,3 +657,11 @@ with tab2:
     render_report(PAPER_TRADES_CSV, "Paper Trading Results", show_capital=True)
 with tab3:
     render_daily_summary(PAPER_TRADES_CSV)
+
+# Must be the LAST thing in the script - st.rerun() halts execution immediately,
+# so anything placed after the point it's called from never renders. Found live
+# 2026-07-17: having this inside render_bot_control() (called before the tabs)
+# meant the tabs/tables never rendered at all whenever auto-refresh was on.
+if auto_refresh:
+    time.sleep(10)
+    st.rerun()

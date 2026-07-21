@@ -35,7 +35,7 @@ from capital_manager import (
 )
 from data_fetch import fetch_historical_data, get_instrument_token
 from ml_signal import MODEL_TYPES, generate_ml_signal, load_models
-from option_lookup import find_nearest_valid_expiry, find_option_instrument, get_option_premium
+from option_lookup import compute_max_pain, find_nearest_valid_expiry, find_option_instrument, get_option_premium
 from options_pricing import nearest_strike
 from signal_engine import RSI_PERIOD, RSI_TURN_LOOKBACK, generate_signal
 from trade_chart import generate_trade_chart
@@ -57,6 +57,16 @@ PAPER_TRADES_DIR = PROJECT_ROOT / "data" / "paper_trades"
 
 MARKET_CLOSE_TIME = time(15, 30)
 FORCE_CLOSE_TIME = time(15, 25)  # force-close any open paper position before real market close
+
+# Splits the day into two independent trade-count quotas instead of one flat
+# max_trades_per_day, per the user's request (2026-07-16): up to N trades from
+# market open through 13:15 (the "morning" window, when the early-session 5-min
+# model is doing the work), then up to N MORE from 13:15 onward (the "afternoon"
+# window, once the primary 15-min model has enough candles) - up to 2N total.
+# 13:15 isn't arbitrary here - it's the same ~4h/16-candle floor documented on
+# MIN_CANDLES_FOR_SIGNAL, just expressed as a wall-clock cutover for the quota
+# logic rather than a candle count.
+SESSION_SPLIT_TIME = time(13, 15)
 
 SIGNAL_POLL_INTERVAL_SECONDS = 60
 POSITION_POLL_INTERVAL_SECONDS = 15
@@ -91,6 +101,8 @@ class PaperTrade:
     pnl_rupees: float
     capital_after: float
     chart_path: str
+    max_pain_strike: float
+    max_pain_agreed: str
 
 
 def _call_with_retry(func, *args, **kwargs):
@@ -110,6 +122,48 @@ def _call_with_retry(func, *args, **kwargs):
             )
             time_module.sleep(RETRY_BACKOFF_SECONDS)
     raise last_exc
+
+
+def _current_session(now: datetime) -> str:
+    """Pure decision logic (no I/O), testable without a live feed - see SESSION_SPLIT_TIME."""
+    return "morning" if now.time() < SESSION_SPLIT_TIME else "afternoon"
+
+
+def _trade_slot_available(
+    now: datetime,
+    trades_taken_today: int,
+    session_slots: dict,
+    max_trades_per_day: int,
+    max_trades_per_session: int,
+    split_session: bool,
+) -> bool:
+    """Pure decision logic (no I/O), testable without a live feed."""
+    if not split_session:
+        return trades_taken_today < max_trades_per_day
+    return session_slots[_current_session(now)] < max_trades_per_session
+
+
+def _is_stale_signal(current_candle_time, last_entry_candle_time) -> bool:
+    """Pure decision logic (no I/O), testable without a live feed. True when this
+    signal is based on the same (or an older) candle as the last entry already
+    acted on - i.e., no genuinely new market information has arrived since then.
+
+    Found live on 2026-07-16: the bot polls every 60s but the early-session model
+    only gets new data every 5 minutes, so after a stop-loss it could immediately
+    re-see the identical still-unrefreshed signal and re-enter within seconds,
+    walking straight back into the same move (5 stop-losses in ~24 minutes on the
+    same contract, all logged at the exact same confidence value)."""
+    return last_entry_candle_time is not None and current_candle_time <= last_entry_candle_time
+
+
+def _record_trade_slot(now: datetime, trades_taken_today: int, session_slots: dict, split_session: bool) -> int:
+    """Pure decision logic (no I/O), testable without a live feed. Mutates session_slots
+    in place (dict) and returns the (possibly unchanged) trades_taken_today counter,
+    since only one of the two counting schemes is active per run."""
+    if split_session:
+        session_slots[_current_session(now)] += 1
+        return trades_taken_today
+    return trades_taken_today + 1
 
 
 def check_exit_condition(
@@ -188,9 +242,18 @@ def run(
     max_trades_per_day: int = 1,
     max_capital_per_trade: float = MAX_CAPITAL_PER_TRADE,
     put_only: bool = False,
+    split_session: bool = False,
+    max_trades_per_session: int = 6,
 ) -> None:
     print(f"Signal source for today: {signal_source}")
-    if max_trades_per_day != 1:
+    if split_session:
+        print(
+            f"NOTE: split_session=True - up to {max_trades_per_session} trades before {SESSION_SPLIT_TIME} "
+            f"(morning session) and up to {max_trades_per_session} more from {SESSION_SPLIT_TIME} onward "
+            f"(afternoon session) - up to {max_trades_per_session * 2} trades today. "
+            "max_trades_per_day is ignored while this is on."
+        )
+    elif max_trades_per_day != 1:
         print(
             f"NOTE: max_trades_per_day={max_trades_per_day} (not the default of 1) - this is a "
             "fast-validation setting, not the intended live-trading discipline. Switch back to 1 "
@@ -222,6 +285,8 @@ def run(
 
     start_time = datetime.now()
     trades_taken_today = 0
+    session_slots = {"morning": 0, "afternoon": 0}
+    last_entry_candle_time = None
 
     while True:
         now = datetime.now()
@@ -231,8 +296,21 @@ def run(
         if now.time() >= MARKET_CLOSE_TIME:
             print("Market closed, stopping for the day.")
             break
-        if trades_taken_today >= max_trades_per_day:
-            print(f"Already completed today's {trades_taken_today} trade(s) (limit {max_trades_per_day}) - done for the day.")
+        if not _trade_slot_available(now, trades_taken_today, session_slots, max_trades_per_day, max_trades_per_session, split_session):
+            if split_session and _current_session(now) == "morning":
+                # Morning quota is full but the afternoon session hasn't opened yet -
+                # pause new entries, don't end the day; the afternoon quota opens on
+                # its own once the clock crosses SESSION_SPLIT_TIME (checked again
+                # next poll - no special-casing needed for the handoff itself).
+                print(
+                    f"[{now.time()}] Morning session quota complete ({session_slots['morning']}/{max_trades_per_session}) "
+                    f"- pausing new entries until the afternoon session opens at {SESSION_SPLIT_TIME}."
+                )
+                time_module.sleep(SIGNAL_POLL_INTERVAL_SECONDS)
+                continue
+            limit_desc = f"{max_trades_per_session}/session" if split_session else f"{max_trades_per_day}/day"
+            taken_desc = sum(session_slots.values()) if split_session else trades_taken_today
+            print(f"Already completed today's {taken_desc} trade(s) (limit {limit_desc}) - done for the day.")
             break
         if now.time() >= FORCE_CLOSE_TIME:
             print(f"Past force-close time ({FORCE_CLOSE_TIME}) - no time left for a new entry to develop, stopping for the day.")
@@ -247,6 +325,7 @@ def run(
 
             if len(intraday_df) >= MIN_CANDLES_FOR_SIGNAL or early_signal_fn is None:
                 signal = signal_fn(daily_df, intraday_df)
+                current_candle_time = intraday_df.iloc[-1]["date"]
             else:
                 # Not enough 15-min candles yet for the primary model - try the
                 # 5-min early-session model instead, so a real morning setup
@@ -257,11 +336,20 @@ def run(
                     time_module.sleep(SIGNAL_POLL_INTERVAL_SECONDS)
                     continue
                 signal = early_signal_fn(daily_df, intraday_5min_df)
+                current_candle_time = intraday_5min_df.iloc[-1]["date"]
                 if signal.direction != "NO_TRADE":
                     signal.reasoning = f"[early-session 5-min model] {signal.reasoning}"
 
             if signal.direction == "NO_TRADE":
                 print(f"[{now.time()}] No signal yet. {signal.reasoning}")
+                time_module.sleep(SIGNAL_POLL_INTERVAL_SECONDS)
+                continue
+
+            if _is_stale_signal(current_candle_time, last_entry_candle_time):
+                print(
+                    f"[{now.time()}] {signal.direction} signal unchanged since the last entry's candle "
+                    f"({last_entry_candle_time}) - waiting for a fresh candle before re-entering."
+                )
                 time_module.sleep(SIGNAL_POLL_INTERVAL_SECONDS)
                 continue
 
@@ -271,6 +359,7 @@ def run(
                 continue
 
             print(f"[{now.time()}] SIGNAL: {signal.direction} - {signal.reasoning}")
+            last_entry_candle_time = current_candle_time
 
             option_type = "CE" if signal.direction == "CALL" else "PE"
             strike = nearest_strike(signal.trigger_price)
@@ -283,8 +372,26 @@ def run(
                 instrument = find_option_instrument(nfo_instruments, strike, expiry, option_type)
             except Exception as exc:
                 print(f"Could not find matching option contract ({exc}) - skipping this trade slot.")
-                trades_taken_today += 1
+                trades_taken_today = _record_trade_slot(now, trades_taken_today, session_slots, split_session)
                 continue
+
+            try:
+                # Shadow mode only - logged for later analysis, never filters or blocks
+                # a trade. OI data isn't retained after expiry, so this can only ever
+                # be computed live, never backtested.
+                max_pain_strike = _call_with_retry(compute_max_pain, kite, nfo_instruments, expiry)
+                if signal.direction == "PUT":
+                    max_pain_agreed = "YES" if signal.trigger_price > max_pain_strike else "NO"
+                else:
+                    max_pain_agreed = "YES" if signal.trigger_price < max_pain_strike else "NO"
+                print(
+                    f"Max Pain (shadow mode): strike {max_pain_strike:.0f} vs spot {signal.trigger_price:.0f} "
+                    f"- {'agrees' if max_pain_agreed == 'YES' else 'disagrees'} with {signal.direction} signal"
+                )
+            except Exception as exc:
+                print(f"Could not compute Max Pain ({exc}) - continuing without it (shadow mode, non-critical).")
+                max_pain_strike = 0.0
+                max_pain_agreed = ""
 
             tradingsymbol = instrument["tradingsymbol"]
             entry_premium = _call_with_retry(get_option_premium, kite, tradingsymbol)
@@ -297,7 +404,7 @@ def run(
                     f"Insufficient capital (Rs {capped_capital:,.2f} deployable, capped at Rs {max_capital_per_trade:,.2f}) "
                     f"for even 1 lot at this premium (needs Rs {needed:,.2f}) - skipping this trade slot."
                 )
-                trades_taken_today += 1
+                trades_taken_today = _record_trade_slot(now, trades_taken_today, session_slots, split_session)
                 continue
 
             invested_amount = lots * 65 * entry_premium
@@ -360,11 +467,13 @@ def run(
                 pnl_rupees=round(pnl_rupees, 2),
                 capital_after=round(new_capital, 2),
                 chart_path=str(chart_path),
+                max_pain_strike=max_pain_strike,
+                max_pain_agreed=max_pain_agreed,
             )
             out_path = _log_trade(trade)
             print(f"Logged trade -> {out_path}")
             capital = new_capital  # so the next trade slot (if max_trades_per_day > 1) sizes off the updated balance
-            trades_taken_today += 1
+            trades_taken_today = _record_trade_slot(now, trades_taken_today, session_slots, split_session)
 
         except Exception as exc:
             # Final safety net: even after retries, something unexpected went wrong.
@@ -390,6 +499,14 @@ if __name__ == "__main__":
                          help="Skip CALL signals entirely, only trade PUT (default: off, both directions "
                               "allowed). CALL's confidence hasn't tracked real accuracy as well as PUT's in "
                               "backtest or live results - available as an option, not the default.")
+    parser.add_argument("--split-session", action="store_true",
+                         help=f"Split the daily cap into two independent windows instead of one flat "
+                              f"--max-trades-per-day: up to --max-trades-per-session trades before "
+                              f"{SESSION_SPLIT_TIME} (morning), then up to --max-trades-per-session more from "
+                              f"{SESSION_SPLIT_TIME} onward (afternoon) - up to 2x --max-trades-per-session total. "
+                              "Overrides --max-trades-per-day when set.")
+    parser.add_argument("--max-trades-per-session", type=int, default=6,
+                         help="Trade cap per session when --split-session is set (default: 6, i.e. up to 12/day).")
     args = parser.parse_args()
     run(
         max_minutes=args.max_minutes,
@@ -397,4 +514,6 @@ if __name__ == "__main__":
         max_trades_per_day=args.max_trades_per_day,
         max_capital_per_trade=args.max_capital_per_trade,
         put_only=args.put_only,
+        split_session=args.split_session,
+        max_trades_per_session=args.max_trades_per_session,
     )
