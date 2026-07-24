@@ -58,7 +58,7 @@ Add `--max-trades-per-day N` (default **1**, the intended discipline) to allow m
 
 Add `--max-capital-per-trade N` (default **₹2,00,000**) to cap how much of the balance is ever risked on a single trade, no matter how large the account has compounded to - anything above the cap simply stays idle/untouched. **Also available directly on the dashboard** (a "Max capital per trade (Rs)" box next to the Start button).
 
-Add `--put-only` to skip CALL signals entirely (PUT trades only) - off by default (both directions are live by default), available if CALL's precision needs excluding again. **Also available on the dashboard** ("PUT only (skip CALL signals)" checkbox, unchecked by default).
+**PUT-only by default** - CALL's confidence collapses at high thresholds in both the primary and early-session models (confirmed 2026-07-24), a consistent cross-model weakness. Add `--allow-calls` to take CALL signals too. **Also available on the dashboard** ("Allow CALL trades" checkbox, unchecked by default).
 
 Add `--split-session` to use two independent trade quotas instead of one flat daily cap: up to `--max-trades-per-session N` (default **6**) trades before 1:15 PM (morning, early-session model), then up to N more from 1:15 PM onward (afternoon, primary model) - up to 2N trades/day total. If the morning quota fills before 1:15, new entries pause (not end the day) until the afternoon quota opens. Overrides `--max-trades-per-day` when set. **Also available on the dashboard** ("Split into morning/afternoon sessions" checkbox).
 

@@ -4,15 +4,24 @@ import sys
 from datetime import datetime, time
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+import os
+
 from paper_trader import (
+    LOCK_FILE_PATH,
     MIN_CANDLES_FOR_SIGNAL,
     SESSION_SPLIT_TIME,
+    DuplicateProcessError,
+    _acquire_lock,
     _build_early_session_signal_fn,
     _current_session,
+    _is_process_alive,
     _is_stale_signal,
     _record_trade_slot,
+    _release_lock,
     _trade_slot_available,
     check_exit_condition,
 )
@@ -143,3 +152,52 @@ def test_is_stale_signal_older_candle_than_last_entry():
 
 def test_is_stale_signal_fresh_candle_after_last_entry():
     assert not _is_stale_signal(datetime(2026, 7, 16, 10, 50), datetime(2026, 7, 16, 10, 45))
+
+
+def test_is_process_alive_true_for_current_process():
+    assert _is_process_alive(os.getpid())
+
+
+def test_is_process_alive_false_for_unlikely_pid():
+    # A PID this high is very unlikely to be in use - not a live-process guarantee,
+    # but a reasonable smoke test that _is_process_alive doesn't just always return True.
+    assert not _is_process_alive(999_999_999)
+
+
+def test_acquire_and_release_lock_round_trip(tmp_path):
+    lock_path = tmp_path / "paper_trader.lock"
+    _acquire_lock(lock_path)
+    assert lock_path.exists()
+    assert int(lock_path.read_text().strip()) == os.getpid()
+    _release_lock(lock_path)
+    assert not lock_path.exists()
+
+
+def test_acquire_lock_allows_restart_after_own_pid(tmp_path):
+    # Re-acquiring with the SAME pid already in the lock file (e.g. re-entering run()
+    # in some edge case) must not raise - a process can't be "duplicate" of itself.
+    lock_path = tmp_path / "paper_trader.lock"
+    lock_path.write_text(str(os.getpid()))
+    _acquire_lock(lock_path)  # should not raise
+    _release_lock(lock_path)
+
+
+def test_acquire_lock_refuses_when_pid_in_lock_is_alive(tmp_path):
+    lock_path = tmp_path / "paper_trader.lock"
+    other_alive_pid = os.getppid()  # the parent process - guaranteed alive during this test
+    lock_path.write_text(str(other_alive_pid))
+    try:
+        with pytest.raises(DuplicateProcessError):
+            _acquire_lock(lock_path)
+    finally:
+        lock_path.unlink(missing_ok=True)  # test-only cleanup, not the real _release_lock path
+
+
+def test_acquire_lock_succeeds_when_lock_is_stale(tmp_path):
+    # Lock file exists but names a PID that's no longer running - a crashed/force-killed
+    # process left this behind, and a new instance should be allowed to start.
+    lock_path = tmp_path / "paper_trader.lock"
+    lock_path.write_text("999999999")
+    _acquire_lock(lock_path)  # should not raise - stale lock is overwritten
+    assert int(lock_path.read_text().strip()) == os.getpid()
+    _release_lock(lock_path)

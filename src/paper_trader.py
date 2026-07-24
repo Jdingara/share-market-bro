@@ -14,6 +14,8 @@ live trading (Phase 5, real orders).
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
 import time as time_module
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, time, timedelta
@@ -23,6 +25,7 @@ from typing import Optional
 
 import pandas as pd
 import requests
+from kiteconnect.exceptions import TokenException
 
 from auth import login
 from capital_manager import (
@@ -54,6 +57,7 @@ MIN_CANDLES_FOR_SIGNAL = RSI_PERIOD + RSI_TURN_LOOKBACK
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PAPER_TRADES_DIR = PROJECT_ROOT / "data" / "paper_trades"
+LOCK_FILE_PATH = PAPER_TRADES_DIR / "paper_trader.lock"
 
 MARKET_CLOSE_TIME = time(15, 30)
 FORCE_CLOSE_TIME = time(15, 25)  # force-close any open paper position before real market close
@@ -103,6 +107,50 @@ class PaperTrade:
     chart_path: str
     max_pain_strike: float
     max_pain_agreed: str
+
+
+class DuplicateProcessError(RuntimeError):
+    pass
+
+
+def _is_process_alive(pid: int) -> bool:
+    """Checks via Windows' built-in tasklist (no extra dependency like psutil needed)."""
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return str(pid) in result.stdout
+    except Exception:
+        return False  # can't verify - safer to allow a new start than to block forever
+
+
+def _acquire_lock(lock_path: Path = LOCK_FILE_PATH) -> None:
+    """Refuses to start if another paper_trader.py instance is already running. Found
+    necessary the hard way: duplicate processes have silently corrupted the trade log
+    and capital file 3 separate times (2026-07-16, and two more discovered together on
+    2026-07-21) - the dashboard's Start button alone does not prevent a second launch.
+    Takes lock_path as a parameter (rather than hardcoding LOCK_FILE_PATH everywhere)
+    so tests can point it at a temp file instead of the real production lock."""
+    if lock_path.exists():
+        try:
+            existing_pid = int(lock_path.read_text().strip())
+        except ValueError:
+            existing_pid = None
+        if existing_pid is not None and existing_pid != os.getpid() and _is_process_alive(existing_pid):
+            raise DuplicateProcessError(
+                f"Another paper_trader.py instance appears to already be running (PID {existing_pid}). "
+                "Stop it first - running two at once corrupts the shared trade log and capital file."
+            )
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text(str(os.getpid()))
+
+
+def _release_lock(lock_path: Path = LOCK_FILE_PATH) -> None:
+    try:
+        lock_path.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def _call_with_retry(func, *args, **kwargs):
@@ -236,12 +284,12 @@ def _build_early_session_signal_fn(signal_source: str):
     )
 
 
-def run(
+def _run_impl(
     max_minutes: Optional[int] = None,
     signal_source: str = DEFAULT_SIGNAL_SOURCE,
     max_trades_per_day: int = 1,
     max_capital_per_trade: float = MAX_CAPITAL_PER_TRADE,
-    put_only: bool = False,
+    put_only: bool = True,
     split_session: bool = False,
     max_trades_per_session: int = 6,
 ) -> None:
@@ -261,9 +309,15 @@ def run(
         )
     if put_only:
         print(
-            "NOTE: put_only=True - CALL signals are being skipped this run. The CALL side of this model "
-            "has shown weaker precision than PUT's in both backtest and live results, but both directions "
-            "remain in scope by default - this is an explicit override, not the standing behavior."
+            "NOTE: put_only=True (the default) - CALL signals are being skipped. CALL's confidence "
+            "collapses at high thresholds in BOTH the primary and early-session models (confirmed "
+            "2026-07-24), a consistent cross-model weakness, not one bad stretch - use --allow-calls "
+            "to override."
+        )
+    else:
+        print(
+            "WARNING: --allow-calls passed - CALL signals are being taken despite confirmed weak "
+            "precision in both models. Only use this deliberately, e.g. to gather more CALL data."
         )
     signal_fn = _build_signal_fn(signal_source)
     early_signal_fn = _build_early_session_signal_fn(signal_source)
@@ -475,6 +529,19 @@ def run(
             capital = new_capital  # so the next trade slot (if max_trades_per_day > 1) sizes off the updated balance
             trades_taken_today = _record_trade_slot(now, trades_taken_today, session_slots, split_session)
 
+        except TokenException:
+            # Found live 2026-07-23: the access token can go invalid mid-session (not
+            # just at the expected daily reset), and blindly retrying the same broken
+            # kite object never recovers - it left a real open position unmonitored for
+            # ~40 minutes that day. Re-login instead of just sleeping and hoping.
+            print(f"[{datetime.now().time()}] Access token invalid - attempting a fresh login...")
+            try:
+                kite = _call_with_retry(login)
+                print(f"[{datetime.now().time()}] Re-login succeeded, resuming.")
+            except Exception as relogin_exc:
+                print(f"[{datetime.now().time()}] Re-login failed too ({relogin_exc!r}) - will retry.")
+                time_module.sleep(RECOVERY_SLEEP_SECONDS)
+
         except Exception as exc:
             # Final safety net: even after retries, something unexpected went wrong.
             # This must never take the whole script down mid-day - log it clearly,
@@ -482,6 +549,17 @@ def run(
             # in an earlier live run (a network blip killed the entire day's monitoring).
             print(f"[{datetime.now().time()}] UNEXPECTED ERROR (continuing): {exc!r}")
             time_module.sleep(RECOVERY_SLEEP_SECONDS)
+
+
+def run(*args, **kwargs) -> None:
+    """Thin wrapper around _run_impl() that refuses to start if another instance is
+    already running (see _acquire_lock's docstring) - always releases the lock on
+    exit, even if _run_impl() crashes."""
+    _acquire_lock()
+    try:
+        _run_impl(*args, **kwargs)
+    finally:
+        _release_lock()
 
 
 if __name__ == "__main__":
@@ -495,10 +573,10 @@ if __name__ == "__main__":
     parser.add_argument("--max-capital-per-trade", type=float, default=MAX_CAPITAL_PER_TRADE,
                          help=f"Never deploy more than this much of the balance on one trade "
                               f"(default: Rs {MAX_CAPITAL_PER_TRADE:,.2f}). Excess balance stays idle.")
-    parser.add_argument("--put-only", action="store_true",
-                         help="Skip CALL signals entirely, only trade PUT (default: off, both directions "
-                              "allowed). CALL's confidence hasn't tracked real accuracy as well as PUT's in "
-                              "backtest or live results - available as an option, not the default.")
+    parser.add_argument("--allow-calls", action="store_true",
+                         help="Allow CALL signals too (default: off, PUT-only). CALL's confidence collapses "
+                              "at high thresholds in both the primary and early-session models (confirmed "
+                              "2026-07-24) - PUT-only is the standing default until that's addressed.")
     parser.add_argument("--split-session", action="store_true",
                          help=f"Split the daily cap into two independent windows instead of one flat "
                               f"--max-trades-per-day: up to --max-trades-per-session trades before "
@@ -513,7 +591,7 @@ if __name__ == "__main__":
         signal_source=args.signal_source,
         max_trades_per_day=args.max_trades_per_day,
         max_capital_per_trade=args.max_capital_per_trade,
-        put_only=args.put_only,
+        put_only=not args.allow_calls,
         split_session=args.split_session,
         max_trades_per_session=args.max_trades_per_session,
     )

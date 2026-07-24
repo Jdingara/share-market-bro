@@ -105,7 +105,7 @@ def stat_tile(col, label: str, value: str, tone: str | None = None) -> None:
 def start_bot(
     max_trades_per_day: int = 1,
     max_capital_per_trade: float = MAX_CAPITAL_PER_TRADE,
-    put_only: bool = False,
+    put_only: bool = True,
     split_session: bool = False,
     max_trades_per_session: int = 6,
 ) -> None:
@@ -116,8 +116,8 @@ def start_bot(
         "--max-trades-per-day", str(max_trades_per_day),
         "--max-capital-per-trade", str(max_capital_per_trade),
     ]
-    if put_only:
-        cmd.append("--put-only")
+    if not put_only:
+        cmd.append("--allow-calls")
     if split_session:
         cmd += ["--split-session", "--max-trades-per-session", str(max_trades_per_session)]
     process = subprocess.Popen(
@@ -217,19 +217,19 @@ def render_bot_control() -> bool:
             ),
         )
 
-        put_only_mode = st.checkbox(
-            "PUT only (skip CALL signals)",
+        allow_calls_mode = st.checkbox(
+            "Allow CALL trades",
             value=False,
             disabled=is_running,
             help=(
-                "Off by default - both CALL and PUT stay in scope. CALL's confidence has tracked real "
-                "accuracy less reliably than PUT's in backtest and live results (checked 2026-07-13), "
-                "but every trade still has to independently clear the confidence bar either way. "
-                "Check this box only if you want to temporarily test PUT-only."
+                "Off by default - PUT-only. CALL's confidence collapses at high thresholds in BOTH "
+                "the primary and early-session models (confirmed 2026-07-24) - a consistent, "
+                "cross-model weakness, not one bad stretch. Check this box only to deliberately "
+                "gather more CALL data."
             ),
         )
-        if put_only_mode:
-            st.warning("CALL signals will be skipped this run - PUT only.")
+        if allow_calls_mode:
+            st.warning("CALL signals will be taken this run, despite confirmed weak precision in both models.")
 
         col1, col2, col3 = st.columns([1, 1, 3])
         with col1:
@@ -237,7 +237,7 @@ def render_bot_control() -> bool:
                 start_bot(
                     max_trades_per_day=int(max_trades),
                     max_capital_per_trade=float(max_capital),
-                    put_only=put_only_mode,
+                    put_only=not allow_calls_mode,
                     split_session=split_session_mode,
                     max_trades_per_session=int(max_trades_per_session),
                 )
@@ -255,7 +255,7 @@ def render_bot_control() -> bool:
                     trades_note = f" · max {st.session_state.bot_max_trades} trades/day" if st.session_state.get("bot_max_trades", 1) != 1 else ""
                 cap = st.session_state.get("bot_max_capital_per_trade", MAX_CAPITAL_PER_TRADE)
                 capital_note = f" · cap Rs {cap:,.0f}/trade" if cap != MAX_CAPITAL_PER_TRADE else ""
-                calls_note = " · PUT only" if st.session_state.get("bot_put_only", False) else ""
+                calls_note = "" if st.session_state.get("bot_put_only", True) else " · CALLs allowed"
                 st.caption(f"{trades_note}{capital_note}{calls_note}".lstrip(" ·") or "​")
 
         st.caption(
