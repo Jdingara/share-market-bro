@@ -3,6 +3,7 @@
 import sys
 from datetime import datetime, time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -20,6 +21,7 @@ from paper_trader import (
     _current_session,
     _is_process_alive,
     _is_stale_signal,
+    _reauthenticate,
     _record_trade_slot,
     _release_lock,
     _trade_slot_available,
@@ -201,3 +203,13 @@ def test_acquire_lock_succeeds_when_lock_is_stale(tmp_path):
     _acquire_lock(lock_path)  # should not raise - stale lock is overwritten
     assert int(lock_path.read_text().strip()) == os.getpid()
     _release_lock(lock_path)
+
+
+def test_reauthenticate_forces_a_fresh_login():
+    # Found live 2026-07-27: calling login() without force=True just re-reads the
+    # same cached (already-broken) token from disk, so a "successful" re-login did
+    # nothing - it returned the identical dead token and failed again on the very
+    # next real API call, dozens of times per second. This must always pass force=True.
+    with patch("paper_trader.login") as mock_login:
+        _reauthenticate()
+        mock_login.assert_called_once_with(force=True)

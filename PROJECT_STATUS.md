@@ -51,7 +51,7 @@ Build an autonomous bot that trades NIFTY 50 index options (calls and puts) thro
 | **5. Live trading** | Real Kite order API calls, safety guards (kill switch, daily loss circuit breaker), static-IP registration | ⬜ Not started |
 | **6. ML enhancement** | Feature-engineer OHLCV + indicators, train classifiers (Random Forest, Logistic Regression, Gradient Boosting) on historical labeled outcomes, compare against the rule-based signal | ✅ Built, honestly 4-way compared, and **now the live default** — see below |
 
-## Current Status (last updated: 2026-07-24)
+## Current Status (last updated: 2026-07-27)
 
 Phases 0 through 4 and Phase 6 are complete. Phase 4 (paper trading) is built and smoke-tested but **not yet run through a full live trading day** - it now runs on the Phase 6 Gradient Boosting (XGBoost) signal by default (see the 2026-07-07 decision below), so tomorrow's run will be the first real test of that combination.
 
@@ -325,9 +325,15 @@ Phases 0 through 4 and Phase 6 are complete. Phase 4 (paper trading) is built an
 
   All three verified: full test suite 76 passing (6 new lock-file tests), dashboard AppTest clean, and a real live smoke test confirming the lock acquires/releases correctly and the new PUT-only messaging displays as expected.
 
+**The 07-24 `TokenException` fix above was actually broken, and only caught live on 2026-07-27.** The shipped code called `_call_with_retry(login)` - **without** `force=True`, despite the write-up above describing it correctly. `login()`'s default (`force=False`) just re-reads whatever token is already cached on disk - exactly the broken one that triggered the exception in the first place. Live result: the bot span in a tight loop, "successfully" re-logging in and immediately failing again on the very next API call, **dozens of times per second**, printing `Re-login succeeded, resuming.` every single time while never actually recovering. Caught from the live log looking wrong (timestamps ~0.4s apart, repeating forever) rather than from a test, since this exception-handling branch had no test at all - it's I/O-heavy code embedded in the main loop, the same reason it wasn't unit-tested the first time.
+
+  **Fixed properly this time**: extracted the relogin call into its own small function, `_reauthenticate()`, which always calls `login(force=True)` - and added a unit test (`test_reauthenticate_forces_a_fresh_login`, mocks `login` and asserts it's called with `force=True`) specifically so this exact mistake can't silently regress again. Verified the fix two ways: the extracted function is now trivially testable (unlike the inline version before), and a direct `login(force=True)` call was confirmed live to actually re-authenticate rather than reuse the cached token. Full suite now 77 passing.
+
+  **Honest lesson**: writing an accurate-sounding description of a fix is not the same as verifying the shipped code actually does it - this bug shipped with documentation that confidently described the *intended* behavior, not what was actually there. Also a reminder that "no test exists for this code path" is itself worth treating as a gap to close, not just an acceptable limitation of I/O-heavy code - extracting the risky one-line call into its own function made it testable with almost no extra effort.
+
 ## Open Decisions (resolve before relevant phase starts)
 
-- ~~Handle `TokenException` with an automatic re-login, not blind retry~~ **Resolved 2026-07-24** - see Current Status.
+- ~~Handle `TokenException` with an automatic re-login, not blind retry~~ **Resolved 2026-07-24, but shipped broken (missing `force=True`) - actually fixed and tested 2026-07-27.** See Current Status.
 
 - ~~Prevent duplicate `paper_trader.py` launches with a lock file~~ **Resolved 2026-07-24** - see Current Status.
 - **Daily profit-target ("kill switch") idea - not adopted, revisit after the observation week with more data.** +10%/day tested as a near-wash on 9 days (helps on peak-then-reverse days, hurts on sustained-trend days) - genuinely inconclusive on this sample size, not dropped for cause. Re-test once more clean days accumulate.

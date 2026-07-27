@@ -204,6 +204,16 @@ def _is_stale_signal(current_candle_time, last_entry_candle_time) -> bool:
     return last_entry_candle_time is not None and current_candle_time <= last_entry_candle_time
 
 
+def _reauthenticate():
+    """Called when a TokenException means the current session is dead. Must use
+    force=True - login()'s default (force=False) re-reads whatever cached token is
+    on disk, which is exactly the already-broken token that got us here. Found live
+    2026-07-27: without force=True this spun in a tight loop, "succeeding" every
+    time by returning the identical dead token, then failing again on the very next
+    real API call, dozens of times per second."""
+    return _call_with_retry(login, force=True)
+
+
 def _record_trade_slot(now: datetime, trades_taken_today: int, session_slots: dict, split_session: bool) -> int:
     """Pure decision logic (no I/O), testable without a live feed. Mutates session_slots
     in place (dict) and returns the (possibly unchanged) trades_taken_today counter,
@@ -536,11 +546,11 @@ def _run_impl(
             # ~40 minutes that day. Re-login instead of just sleeping and hoping.
             print(f"[{datetime.now().time()}] Access token invalid - attempting a fresh login...")
             try:
-                kite = _call_with_retry(login)
+                kite = _reauthenticate()
                 print(f"[{datetime.now().time()}] Re-login succeeded, resuming.")
             except Exception as relogin_exc:
                 print(f"[{datetime.now().time()}] Re-login failed too ({relogin_exc!r}) - will retry.")
-                time_module.sleep(RECOVERY_SLEEP_SECONDS)
+            time_module.sleep(RECOVERY_SLEEP_SECONDS)
 
         except Exception as exc:
             # Final safety net: even after retries, something unexpected went wrong.
