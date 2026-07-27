@@ -331,6 +331,8 @@ Phases 0 through 4 and Phase 6 are complete. Phase 4 (paper trading) is built an
 
   **Honest lesson**: writing an accurate-sounding description of a fix is not the same as verifying the shipped code actually does it - this bug shipped with documentation that confidently described the *intended* behavior, not what was actually there. Also a reminder that "no test exists for this code path" is itself worth treating as a gap to close, not just an acceptable limitation of I/O-heavy code - extracting the risky one-line call into its own function made it testable with almost no extra effort.
 
+  **Same root cause found in a second spot minutes later, same day**: the *startup* login (`kite = _call_with_retry(login)`, before the main loop even begins) had the identical missing-`force=True` bug - with a genuinely stale cached token on disk (from the same day's earlier token churn), every fresh bot start crashed immediately on its first real API call, since it never even reached the in-loop `TokenException` handler that was just fixed. Confirmed live: `login()` (no force) failed with the same `TokenException`; `login(force=True)` succeeded immediately. **Fixed by reusing `_reauthenticate()` at startup too**, rather than a separate bespoke call - one function, one place `force=True` can be forgotten again, covered by the same existing test. No new test needed (the existing `test_reauthenticate_forces_a_fresh_login` already covers this call site too, since it's the same function).
+
 ## Open Decisions (resolve before relevant phase starts)
 
 - ~~Handle `TokenException` with an automatic re-login, not blind retry~~ **Resolved 2026-07-24, but shipped broken (missing `force=True`) - actually fixed and tested 2026-07-27.** See Current Status.

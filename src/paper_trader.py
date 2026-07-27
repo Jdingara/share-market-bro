@@ -334,7 +334,13 @@ def _run_impl(
     if early_signal_fn is not None:
         print("Early-session (5-min candle) model loaded - can signal from ~1h20m after open instead of ~4h.")
 
-    kite = _call_with_retry(login)
+    # force=True, not a plain login() - a cached token from an earlier session that
+    # went stale (see _reauthenticate) would otherwise be reused here unchanged and
+    # crash the very first real API call below. Found live 2026-07-27: the mid-loop
+    # reauth logic already required this; starting the process fresh needs the same
+    # guarantee, since it has no in-loop exception handler to fall back on if this
+    # cached token is bad.
+    kite = _reauthenticate()
     nifty_token = _call_with_retry(get_instrument_token, kite, "NIFTY 50", "NSE")
 
     daily_df = _call_with_retry(_fetch_prior_daily, kite, nifty_token)
