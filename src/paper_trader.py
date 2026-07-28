@@ -214,6 +214,39 @@ def _reauthenticate():
     return _call_with_retry(login, force=True)
 
 
+def _monitor_position_until_exit(kite, tradingsymbol: str, entry_premium: float):
+    """Polls an open position's premium until an exit condition fires. Returns
+    (kite, exit_reason, exit_premium) - kite is returned because it may get
+    reassigned on a mid-monitoring re-login.
+
+    A TokenException here is recovered WITHOUT leaving this loop - it used to
+    propagate to the caller's outer handler, which reauthenticates but then
+    returns to the top of the main loop, forgetting this open position entirely
+    (entry_premium/tradingsymbol were local variables in the caller, lost on
+    unwind). Found live 2026-07-28: this let the bot open a SECOND position on
+    top of the first, since it no longer knew one was open. Even a failed
+    reauth attempt must not escape this loop either - staying here and retrying
+    next poll is always safer than falling through to code that forgets this
+    position exists."""
+    exit_reason = None
+    exit_premium = entry_premium
+    while exit_reason is None:
+        time_module.sleep(POSITION_POLL_INTERVAL_SECONDS)
+        try:
+            current_premium = _call_with_retry(get_option_premium, kite, tradingsymbol)
+        except TokenException:
+            print(f"[{datetime.now().time()}] Access token invalid while monitoring open position - re-authenticating...")
+            try:
+                kite = _reauthenticate()
+                print(f"[{datetime.now().time()}] Re-login succeeded, still watching {tradingsymbol}.")
+            except Exception as relogin_exc:
+                print(f"[{datetime.now().time()}] Re-login failed too ({relogin_exc!r}) - still watching {tradingsymbol}, will retry.")
+            continue
+        exit_reason = check_exit_condition(entry_premium, current_premium, datetime.now())
+        exit_premium = current_premium
+    return kite, exit_reason, exit_premium
+
+
 def _record_trade_slot(now: datetime, trades_taken_today: int, session_slots: dict, split_session: bool) -> int:
     """Pure decision logic (no I/O), testable without a live feed. Mutates session_slots
     in place (dict) and returns the (possibly unchanged) trades_taken_today counter,
@@ -481,13 +514,7 @@ def _run_impl(
             entry_time = datetime.now()
             print(f"PAPER ENTRY: {signal.direction} {tradingsymbol} @ {entry_premium} x {lots} lot(s) (Rs {invested_amount:,.2f})")
 
-            exit_reason = None
-            exit_premium = entry_premium
-            while exit_reason is None:
-                time_module.sleep(POSITION_POLL_INTERVAL_SECONDS)
-                current_premium = _call_with_retry(get_option_premium, kite, tradingsymbol)
-                exit_reason = check_exit_condition(entry_premium, current_premium, datetime.now())
-                exit_premium = current_premium
+            kite, exit_reason, exit_premium = _monitor_position_until_exit(kite, tradingsymbol, entry_premium)
 
             exit_time = datetime.now()
             pct_change = (exit_premium - entry_premium) / entry_premium

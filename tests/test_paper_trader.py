@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from kiteconnect.exceptions import TokenException
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -21,6 +22,7 @@ from paper_trader import (
     _current_session,
     _is_process_alive,
     _is_stale_signal,
+    _monitor_position_until_exit,
     _reauthenticate,
     _record_trade_slot,
     _release_lock,
@@ -213,3 +215,60 @@ def test_reauthenticate_forces_a_fresh_login():
     with patch("paper_trader.login") as mock_login:
         _reauthenticate()
         mock_login.assert_called_once_with(force=True)
+
+
+def test_monitor_position_survives_token_exception_without_losing_the_position():
+    # Found live 2026-07-28: a TokenException mid-monitoring used to escape this
+    # loop entirely and propagate to the caller's outer handler, which
+    # reauthenticates but then returns to the top of the main loop - forgetting
+    # this open position ever existed and letting the bot open a SECOND one on
+    # top of it. This confirms recovery now happens IN PLACE, still watching the
+    # same position, instead.
+    call_count = {"n": 0}
+
+    def fake_get_option_premium(kite, tradingsymbol):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise TokenException("Incorrect `api_key` or `access_token`.")
+        return 110.0  # +10% from entry_premium=100.0 below -> TARGET
+
+    fake_new_kite = object()
+    with patch("paper_trader.time_module.sleep"), \
+         patch("paper_trader.get_option_premium", side_effect=fake_get_option_premium), \
+         patch("paper_trader._reauthenticate", return_value=fake_new_kite) as mock_reauth:
+        kite, exit_reason, exit_premium = _monitor_position_until_exit("old_kite", "NIFTY123PE", 100.0)
+
+    assert exit_reason == "TARGET"
+    assert exit_premium == 110.0
+    assert kite is fake_new_kite  # the loop picked up the reauthenticated client
+    mock_reauth.assert_called_once()
+
+
+def test_monitor_position_survives_a_failed_reauth_attempt_too():
+    # Even if the reauth attempt itself fails, the loop must not escape - it
+    # should keep watching the same position and retry on the next poll.
+    call_count = {"n": 0}
+
+    def fake_get_option_premium(kite, tradingsymbol):
+        call_count["n"] += 1
+        if call_count["n"] <= 2:
+            raise TokenException("Incorrect `api_key` or `access_token`.")
+        return 95.0  # -5% from entry_premium=100.0 below -> STOPLOSS
+
+    reauth_calls = {"n": 0}
+
+    def flaky_reauth():
+        reauth_calls["n"] += 1
+        if reauth_calls["n"] == 1:
+            raise TokenException("still broken")
+        return "recovered_kite"
+
+    with patch("paper_trader.time_module.sleep"), \
+         patch("paper_trader.get_option_premium", side_effect=fake_get_option_premium), \
+         patch("paper_trader._reauthenticate", side_effect=flaky_reauth):
+        kite, exit_reason, exit_premium = _monitor_position_until_exit("old_kite", "NIFTY123PE", 100.0)
+
+    assert exit_reason == "STOPLOSS"
+    assert exit_premium == 95.0
+    assert kite == "recovered_kite"
+    assert reauth_calls["n"] == 2
