@@ -35,6 +35,11 @@ Autonomous NIFTY 50 options trading bot, built in phases:
 ```
 py src/auth.py
 ```
+If this fails with a CAPTCHA error, Zerodha has put a CAPTCHA on the login page for your account (this can happen after a burst of automated logins) - the automated flow in `auth.py` can't solve it. Run this instead, once, and follow the prompts (you'll log in through a real browser yourself):
+```
+py src/manual_login.py
+```
+It caches a fresh token that `auth.py`/`paper_trader.py` will pick up automatically afterward - no other changes needed, and any already-running bot process recovers on its own within its normal retry cycle, no restart required.
 
 **Fetch historical data** (cached to `data/historical/` as CSV, so repeated runs don't re-hit the API):
 ```

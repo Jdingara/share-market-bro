@@ -205,13 +205,25 @@ def _is_stale_signal(current_candle_time, last_entry_candle_time) -> bool:
 
 
 def _reauthenticate():
-    """Called when a TokenException means the current session is dead. Must use
-    force=True - login()'s default (force=False) re-reads whatever cached token is
-    on disk, which is exactly the already-broken token that got us here. Found live
-    2026-07-27: without force=True this spun in a tight loop, "succeeding" every
-    time by returning the identical dead token, then failing again on the very next
-    real API call, dozens of times per second."""
-    return _call_with_retry(login, force=True)
+    """Called when a TokenException means the current session is dead.
+
+    Uses force=False (read the cache), NOT force=True (force a fresh automated
+    login) - this flipped 2026-07-30. force=True was the fix on 2026-07-27 (see
+    git history), back when the automated password+TOTP flow could actually
+    produce a fresh token. It can't anymore: Zerodha started requiring a CAPTCHA
+    on this account's login page, which that flow can't solve, so force=True
+    now just fails every time - and doing that on every retry would keep
+    hammering the CAPTCHA-protected endpoint, plausibly making whatever
+    triggered it worse, while never recovering even after a human fixes things.
+
+    force=False is safe to call repeatedly here specifically because every
+    caller paces its retries at 15-30s minimum (position-monitoring poll,
+    the outer per-cycle handler, or a one-off startup call) - never a tight
+    loop - so if the cache is still stale this just waits for the next cycle,
+    and the moment a human runs `py src/manual_login.py` (which updates the
+    same cache file this reads fresh every time), the very next retry picks
+    up the fresh token automatically, no restart needed."""
+    return _call_with_retry(login, force=False)
 
 
 def _monitor_position_until_exit(kite, tradingsymbol: str, entry_premium: float):

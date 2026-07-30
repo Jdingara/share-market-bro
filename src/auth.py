@@ -7,13 +7,30 @@ without a human clicking through a browser.
 
 Zerodha's *officially documented* login flow is manual: open a browser login
 URL, log in, get redirected back with a request_token. There is no official
-headless/programmatic login API. The approach below automates the same login
-steps (password + TOTP) by calling Kite's web login endpoints directly with
-`requests`, which is the widely-used pattern in the retail algo-trading
-community for exactly this problem. It is NOT part of Kite Connect's
-documented public API, so if Zerodha changes their web login internals, this
-will need updating - if `login()` starts failing, that's the first thing to
-check.
+headless/programmatic login API. `_fetch_request_token()` below automates the
+same login steps (password + TOTP) by calling Kite's web login endpoints
+directly with `requests`, which is the widely-used pattern in the retail
+algo-trading community for exactly this problem. It is NOT part of Kite
+Connect's documented public API.
+
+**Confirmed broken by a CAPTCHA requirement, 2026-07-30** - Zerodha's login
+endpoint started returning "Invalid CAPTCHA values" for this account, which
+this automated flow fundamentally cannot solve (that's the whole point of a
+CAPTCHA). Best guess at the trigger: the volume of automated re-logins over
+the preceding days (both diagnostic scripts and the bot's own retry-on-
+failure logins during token-collision incidents) likely looked like bot-like
+login activity to Zerodha's security systems. `login()` still tries this
+flow when there's no cached token and force isn't explicitly False-only, but
+now raises a clear, actionable error pointing to `manual_login.py` instead of
+a generic HTTP error when CAPTCHA blocks it.
+
+**The sanctioned fallback is `manual_login.py`** - run it once (whenever the
+cached token is invalid/missing) to log in by hand through a real browser,
+solving the CAPTCHA yourself as a human, and it caches a fresh token to the
+same file this module reads. Because `login()` always re-reads that cache
+file fresh from disk on every call (never trusts an in-memory copy), running
+`manual_login.py` is enough to get any already-running process using
+`_reauthenticate()` (see paper_trader.py) unstuck without a restart.
 
 The resulting access token is cached to `.cache/access_token.json` for the
 day, so re-running any script the same day reuses it instead of logging in
@@ -77,11 +94,21 @@ def _save_cached_token(access_token: str) -> None:
 def _fetch_request_token(api_key: str, user_id: str, password: str, totp_secret: str) -> str:
     session = requests.Session()
 
+    # No raise_for_status() here - Zerodha returns a real 400 with a JSON body
+    # (e.g. the CAPTCHA case) rather than an empty error page, and that JSON
+    # message is far more useful than a generic HTTPError. Matches the 2FA
+    # step below, which already reads the body first.
     login_resp = session.post(KITE_LOGIN_URL, data={"user_id": user_id, "password": password})
-    login_resp.raise_for_status()
     login_data = login_resp.json()
     if login_data.get("status") != "success":
-        raise AuthError(f"Zerodha login step failed: {login_data.get('message', login_data)}")
+        message = login_data.get("message", login_data)
+        if login_data.get("data", {}).get("captcha"):
+            raise AuthError(
+                f"Zerodha login step failed: {message} - this automated flow can't solve a "
+                "CAPTCHA. Run `py src/manual_login.py` once to log in by hand through a real "
+                "browser; login() will pick up the fresh cached token automatically afterward."
+            )
+        raise AuthError(f"Zerodha login step failed: {message}")
     request_id = login_data["data"]["request_id"]
 
     totp = pyotp.TOTP(totp_secret).now()

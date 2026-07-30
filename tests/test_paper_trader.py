@@ -207,14 +207,17 @@ def test_acquire_lock_succeeds_when_lock_is_stale(tmp_path):
     _release_lock(lock_path)
 
 
-def test_reauthenticate_forces_a_fresh_login():
-    # Found live 2026-07-27: calling login() without force=True just re-reads the
-    # same cached (already-broken) token from disk, so a "successful" re-login did
-    # nothing - it returned the identical dead token and failed again on the very
-    # next real API call, dozens of times per second. This must always pass force=True.
+def test_reauthenticate_reads_the_cache_not_a_forced_fresh_login():
+    # Flipped 2026-07-30: force=True (the 2026-07-27 fix) tried an automated
+    # fresh login every time, but Zerodha started requiring a CAPTCHA on this
+    # account's login page, which that flow can't solve - so force=True just
+    # fails every retry, repeatedly hitting the CAPTCHA-protected endpoint
+    # without ever recovering. force=False reads whatever's cached, which
+    # manual_login.py (a human solving the CAPTCHA once) can update - this
+    # confirms _reauthenticate never falls back to the automated flow.
     with patch("paper_trader.login") as mock_login:
         _reauthenticate()
-        mock_login.assert_called_once_with(force=True)
+        mock_login.assert_called_once_with(force=False)
 
 
 def test_monitor_position_survives_token_exception_without_losing_the_position():
