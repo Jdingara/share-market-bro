@@ -13,26 +13,33 @@ candles up to whatever point it's evaluating.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import datetime, time, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 
-from options_pricing import black_scholes_price, historical_volatility, nearest_strike, next_weekly_expiry
+from ml_features import attach_vix
+from options_pricing import (
+    black_scholes_price,
+    historical_volatility,
+    nearest_strike,
+    next_weekly_expiry,
+    time_to_expiry_years,
+)
 from signal_engine import generate_signal
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DAILY_CSV = PROJECT_ROOT / "data" / "historical" / "NIFTY_50_day.csv"
 INTRADAY_CSV = PROJECT_ROOT / "data" / "historical" / "NIFTY_50_15minute.csv"
+VIX_DAILY_CSV = PROJECT_ROOT / "data" / "historical" / "INDIA_VIX_day.csv"
+VIX_INTRADAY_CSV = PROJECT_ROOT / "data" / "historical" / "INDIA_VIX_15minute.csv"
 RESULTS_DIR = PROJECT_ROOT / "data" / "backtest_results"
 
 MIN_DAILY_HISTORY = 55  # enough rows for a meaningful EMA(50) and a 20-day volatility window
-MARKET_CLOSE_TIME = time(15, 30)
 TARGET_PCT = 0.10
 STOP_LOSS_PCT = 0.10
 VOLATILITY_WINDOW = 20
-SECONDS_PER_YEAR = 365 * 24 * 3600
 
 
 @dataclass
@@ -50,12 +57,6 @@ class TradeResult:
     pct_change: float
 
 
-def _time_to_expiry_years(as_of: datetime, expiry_date) -> float:
-    expiry_dt = datetime.combine(expiry_date, MARKET_CLOSE_TIME)
-    as_of_naive = as_of.replace(tzinfo=None)
-    return max((expiry_dt - as_of_naive).total_seconds(), 0.0) / SECONDS_PER_YEAR
-
-
 def _load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     daily_df = pd.read_csv(DAILY_CSV)
     daily_df["date"] = pd.to_datetime(daily_df["date"])
@@ -64,6 +65,23 @@ def _load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     intraday_df = pd.read_csv(INTRADAY_CSV)
     intraday_df["date"] = pd.to_datetime(intraday_df["date"])
     intraday_df = intraday_df.sort_values("date").reset_index(drop=True)
+
+    # India VIX features (added 2026-08-12) - merged in here so run_backtest() sees
+    # real VIX values regardless of which signal_fn it's replaying (rule-based
+    # ignores the extra column entirely; ML models trained with VIX need the real
+    # values here, not extract_features' neutral fallback). Guarded on the CSVs
+    # existing so a checkout that hasn't run `data_fetch.py --symbol "INDIA VIX"`
+    # yet still works exactly as before - it just won't have VIX-aware ML models
+    # behaving accurately, same as any other caller that skips the merge.
+    if VIX_DAILY_CSV.exists() and VIX_INTRADAY_CSV.exists():
+        vix_daily_df = pd.read_csv(VIX_DAILY_CSV)
+        vix_daily_df["date"] = pd.to_datetime(vix_daily_df["date"])
+        daily_df = attach_vix(daily_df, vix_daily_df)
+
+        vix_intraday_df = pd.read_csv(VIX_INTRADAY_CSV)
+        vix_intraday_df["date"] = pd.to_datetime(vix_intraday_df["date"])
+        intraday_df = attach_vix(intraday_df, vix_intraday_df)
+
     return daily_df, intraday_df
 
 
@@ -80,14 +98,14 @@ def simulate_trade(
     expiry = next_weekly_expiry(entry_time.date())
     volatility = historical_volatility(daily_history["close"], window=VOLATILITY_WINDOW)
 
-    entry_tte = _time_to_expiry_years(entry_time, expiry)
+    entry_tte = time_to_expiry_years(entry_time, expiry)
     entry_premium = black_scholes_price(entry_spot, strike, entry_tte, volatility, option_type)
 
     exit_time, exit_premium, exit_reason = entry_time, entry_premium, "EOD_CLOSE"
 
     for _, candle in remaining_intraday.iterrows():
         candle_time = candle["date"].to_pydatetime()
-        tte = _time_to_expiry_years(candle_time, expiry)
+        tte = time_to_expiry_years(candle_time, expiry)
 
         # A real stop/target order fills near the trigger price, not wherever the
         # underlying happens to be when we next check - so check the candle's full

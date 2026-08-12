@@ -16,6 +16,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from backtester import run_backtest
+from ml_features import attach_vix
 from ml_signal import MODEL_TYPES, build_labeled_dataset, load_models, time_based_split, generate_ml_signal
 from signal_engine import generate_signal
 
@@ -28,6 +29,19 @@ daily_df = daily_df.sort_values("date").reset_index(drop=True)
 intraday_df = pd.read_csv(PROJECT_ROOT / "data" / "historical" / "NIFTY_50_15minute.csv")
 intraday_df["date"] = pd.to_datetime(intraday_df["date"])
 intraday_df = intraday_df.sort_values("date").reset_index(drop=True)
+
+# India VIX features (added 2026-08-12) - must be merged in here too, not just at
+# training time: the loaded models were fit expecting real vix_level/vix_change/
+# vix_pctile values, and without this merge extract_features silently falls back
+# to neutral defaults (0.0/0.0/0.5) instead of raising - a comparison run without
+# this would quietly evaluate the VIX-aware models on fake, constant VIX inputs.
+vix_daily_df = pd.read_csv(PROJECT_ROOT / "data" / "historical" / "INDIA_VIX_day.csv")
+vix_daily_df["date"] = pd.to_datetime(vix_daily_df["date"])
+daily_df = attach_vix(daily_df, vix_daily_df)
+
+vix_intraday_df = pd.read_csv(PROJECT_ROOT / "data" / "historical" / "INDIA_VIX_15minute.csv")
+vix_intraday_df["date"] = pd.to_datetime(vix_intraday_df["date"])
+intraday_df = attach_vix(intraday_df, vix_intraday_df)
 
 # Recompute the exact same chronological split used during training, so we
 # know precisely which days are genuinely held-out (never seen in training).

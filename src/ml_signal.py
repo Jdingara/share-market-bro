@@ -38,7 +38,7 @@ from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
 
 from backtester import MIN_DAILY_HISTORY, simulate_trade
-from ml_features import FEATURE_NAMES, extract_features
+from ml_features import FEATURE_NAMES, attach_vix, extract_features
 from signal_engine import RSI_PERIOD, RSI_TURN_LOOKBACK, SIGNAL_CUTOFF_TIME, Signal
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -236,6 +236,17 @@ def main() -> None:
     intraday_df = pd.read_csv(PROJECT_ROOT / "data" / "historical" / "NIFTY_50_15minute.csv")
     intraday_df["date"] = pd.to_datetime(intraday_df["date"])
     intraday_df = intraday_df.sort_values("date").reset_index(drop=True)
+
+    # India VIX features (added 2026-08-12) - merged in here, once, so every
+    # downstream slice build_labeled_dataset takes (daily_history, day_intraday)
+    # carries vix_close along for free; see ml_features.attach_vix/extract_features.
+    vix_daily_df = pd.read_csv(PROJECT_ROOT / "data" / "historical" / "INDIA_VIX_day.csv")
+    vix_daily_df["date"] = pd.to_datetime(vix_daily_df["date"])
+    daily_df = attach_vix(daily_df, vix_daily_df)
+
+    vix_intraday_df = pd.read_csv(PROJECT_ROOT / "data" / "historical" / "INDIA_VIX_15minute.csv")
+    vix_intraday_df["date"] = pd.to_datetime(vix_intraday_df["date"])
+    intraday_df = attach_vix(intraday_df, vix_intraday_df)
 
     print("Building labeled dataset (this simulates every candle's hypothetical CALL and PUT outcome)...")
     labeled_df = build_labeled_dataset(daily_df, intraday_df)

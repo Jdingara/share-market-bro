@@ -77,12 +77,12 @@ By default, the bot can't generate any signal for the first ~4 hours after marke
 
 Every real trade also gets a **Max Pain / Open Interest check logged alongside it, in shadow mode** - it does not affect trading decisions yet, purely diagnostic (see `PROJECT_STATUS.md` for the full plan). Computes the strike that would minimize total payout to option holders for that trade's expiry (`src/option_lookup.py`'s `compute_max_pain()`, using real Open Interest via `kite.quote()`), and logs whether it agrees with the signal's direction as two extra columns in `paper_trades.csv`: `max_pain_strike`, `max_pain_agreed`.
 
-**Train the ML signal engine** (labels historical candles, trains all 3 model types - Random Forest, Logistic Regression, Gradient Boosting - with calibrated thresholds, saves to `data/models/`):
+**Train the ML signal engine** (labels historical candles, trains all 3 model types - Random Forest, Logistic Regression, Gradient Boosting - with calibrated thresholds, saves to `data/models/`). Features include India VIX (level/change/percentile) and synthetic options Greeks (gamma/theta/vega, priced off the live VIX reading) as of 2026-08-12 - needs `data/historical/INDIA_VIX_day.csv` and `INDIA_VIX_15minute.csv` fetched first (`py src/data_fetch.py --symbol "INDIA VIX" --interval day --days 150` and `--interval 15minute --days 200`):
 ```
 py src/ml_signal.py
 ```
 
-**Train the early-session (5-minute candle) model** (lets `gradient_boosting` signal earlier in the day - see above; needs `data/historical/NIFTY_50_5minute.csv`, fetch it first via `py src/data_fetch.py --interval 5minute --days 210`):
+**Train the early-session (5-minute candle) model** (lets `gradient_boosting` signal earlier in the day - see above; needs `data/historical/NIFTY_50_5minute.csv` and `INDIA_VIX_5minute.csv`, fetch via `py src/data_fetch.py --interval 5minute --days 210` for each symbol):
 ```
 py src/train_5min_model.py
 ```
@@ -90,6 +90,11 @@ py src/train_5min_model.py
 **Compare the ML signal against the rule-based one** (honest side-by-side on the same held-out test period):
 ```
 py tests/compare_ml_vs_rules.py
+```
+
+**Scan CALL-only confidence-threshold precision** (isolates CALL from PUT entirely, for every model type and both candle resolutions - the diagnostic that drives the PUT-only default; see `PROJECT_STATUS.md` for the latest read):
+```
+py tests/call_threshold_scan.py
 ```
 
 **Run the test suite:**

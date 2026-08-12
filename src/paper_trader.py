@@ -47,6 +47,7 @@ from capital_manager import (
     save_capital,
 )
 from data_fetch import fetch_historical_data, get_instrument_token
+from ml_features import attach_vix
 from ml_signal import MODEL_TYPES, generate_ml_signal, load_models
 from option_lookup import compute_max_pain, find_nearest_valid_expiry, find_option_instrument, get_option_premium
 from options_pricing import nearest_strike
@@ -369,20 +370,22 @@ def _log_trade(trade: PaperTrade) -> Path:
     return out_path
 
 
-def _fetch_today_intraday(kite, nifty_token: int) -> pd.DataFrame:
+def _fetch_today_intraday(kite, instrument_token: int) -> pd.DataFrame:
+    # Generic despite the historical param name - reused for both NIFTY and,
+    # since 2026-08-12, India VIX (see instrument_token callers in _run_impl).
     today = date.today()
-    return fetch_historical_data(kite, nifty_token, today, today, "15minute")
+    return fetch_historical_data(kite, instrument_token, today, today, "15minute")
 
 
-def _fetch_today_intraday_5min(kite, nifty_token: int) -> pd.DataFrame:
+def _fetch_today_intraday_5min(kite, instrument_token: int) -> pd.DataFrame:
     today = date.today()
-    return fetch_historical_data(kite, nifty_token, today, today, "5minute")
+    return fetch_historical_data(kite, instrument_token, today, today, "5minute")
 
 
-def _fetch_prior_daily(kite, nifty_token: int) -> pd.DataFrame:
+def _fetch_prior_daily(kite, instrument_token: int) -> pd.DataFrame:
     today = date.today()
     from_date = today - timedelta(days=DAILY_HISTORY_DAYS)
-    df = fetch_historical_data(kite, nifty_token, from_date, today, "day")
+    df = fetch_historical_data(kite, instrument_token, from_date, today, "day")
     df["date"] = pd.to_datetime(df["date"])
     return df[df["date"].dt.date < today].reset_index(drop=True)
 
@@ -464,9 +467,16 @@ def _run_impl(
     # cached token is bad.
     kite = _reauthenticate()
     nifty_token = _call_with_retry(get_instrument_token, kite, "NIFTY 50", "NSE")
+    vix_token = _call_with_retry(get_instrument_token, kite, "INDIA VIX", "NSE")
 
     daily_df = _call_with_retry(_fetch_prior_daily, kite, nifty_token)
     print(f"Loaded {len(daily_df)} prior daily candles.")
+
+    # India VIX features (added 2026-08-12) - merged in once here at startup for
+    # the slow-moving daily side; the fast-moving intraday side is re-fetched and
+    # re-merged every poll cycle below, alongside NIFTY's own intraday fetch.
+    vix_daily_df = _call_with_retry(_fetch_prior_daily, kite, vix_token)
+    daily_df = attach_vix(daily_df, vix_daily_df)
 
     nfo_instruments = _call_with_retry(kite.instruments, "NFO")
     print(f"Loaded {len(nfo_instruments)} NFO instruments.")
@@ -535,6 +545,8 @@ def _run_impl(
                 continue
 
             if len(intraday_df) >= MIN_CANDLES_FOR_SIGNAL or early_signal_fn is None:
+                vix_intraday_df = _call_with_retry(_fetch_today_intraday, kite, vix_token)
+                intraday_df = attach_vix(intraday_df, vix_intraday_df)
                 signal = signal_fn(daily_df, intraday_df)
                 current_candle_time = intraday_df.iloc[-1]["date"]
             else:
@@ -546,6 +558,8 @@ def _run_impl(
                     print(f"[{now.time()}] Not enough candles yet for even the early-session model, waiting...")
                     time_module.sleep(SIGNAL_POLL_INTERVAL_SECONDS)
                     continue
+                vix_intraday_5min_df = _call_with_retry(_fetch_today_intraday_5min, kite, vix_token)
+                intraday_5min_df = attach_vix(intraday_5min_df, vix_intraday_5min_df)
                 signal = early_signal_fn(daily_df, intraday_5min_df)
                 current_candle_time = intraday_5min_df.iloc[-1]["date"]
                 if signal.direction != "NO_TRADE":

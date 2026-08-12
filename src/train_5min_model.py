@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from ml_features import attach_vix
 from ml_signal import build_labeled_dataset, save_models, time_based_split, train_models
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -36,6 +37,16 @@ def main() -> None:
     intraday_df = pd.read_csv(PROJECT_ROOT / "data" / "historical" / "NIFTY_50_5minute.csv")
     intraday_df["date"] = pd.to_datetime(intraday_df["date"])
     intraday_df = intraday_df.sort_values("date").reset_index(drop=True)
+
+    # India VIX features (added 2026-08-12) - same merge ml_signal.py's main() does,
+    # kept in sync so this model sees the same feature set the primary one does.
+    vix_daily_df = pd.read_csv(PROJECT_ROOT / "data" / "historical" / "INDIA_VIX_day.csv")
+    vix_daily_df["date"] = pd.to_datetime(vix_daily_df["date"])
+    daily_df = attach_vix(daily_df, vix_daily_df)
+
+    vix_intraday_df = pd.read_csv(PROJECT_ROOT / "data" / "historical" / "INDIA_VIX_5minute.csv")
+    vix_intraday_df["date"] = pd.to_datetime(vix_intraday_df["date"])
+    intraday_df = attach_vix(intraday_df, vix_intraday_df)
 
     print("Building labeled dataset from 5-minute candles (this simulates every candle's hypothetical CALL/PUT outcome)...")
     labeled_df = build_labeled_dataset(daily_df, intraday_df)

@@ -26,6 +26,7 @@ from indicators import (
     is_shooting_star,
     rsi,
 )
+from options_pricing import black_scholes_greeks, nearest_strike, next_weekly_expiry, time_to_expiry_years
 
 RSI_PERIOD = 14
 RSI_TURN_LOOKBACK = 2
@@ -35,6 +36,16 @@ BB_WINDOW = 20
 BB_NUM_STD = 2.0
 MOMENTUM_LOOKBACK = 3
 MARKET_OPEN_TIME = time(9, 15)
+
+# India VIX features (added 2026-08-12, first piece of the CALL-improvement plan
+# agreed 2026-07-28/08-06). VIX_LOOKBACK reuses MOMENTUM_LOOKBACK so "recent VIX
+# trend" is measured over the same window as price momentum, for consistency.
+# VIX_PCTILE_WINDOW reuses BB_WINDOW (20 trailing days) for the same reason -
+# a regime-detection window that's already an established convention here,
+# not a newly-guessed number.
+VIX_LOOKBACK = MOMENTUM_LOOKBACK
+VIX_PCTILE_WINDOW = BB_WINDOW
+VIX_PCTILE_MIN_HISTORY = 5  # below this, a percentile isn't meaningful - fall back to neutral (0.5)
 
 FEATURE_NAMES = [
     "rsi_value",
@@ -53,7 +64,24 @@ FEATURE_NAMES = [
     "is_shooting_star",
     "minutes_since_open",
     "day_of_week",
+    "vix_level",
+    "vix_change",
+    "vix_pctile",
+    "atm_gamma",
+    "atm_theta",
+    "atm_vega",
 ]
+
+
+def attach_vix(price_df: pd.DataFrame, vix_df: pd.DataFrame) -> pd.DataFrame:
+    """Left-joins India VIX closes onto price_df (daily or intraday, whichever
+    is being prepared) by 'date', as a new 'vix_close' column - the shape
+    extract_features expects. Left join, not inner: a NIFTY row must never be
+    dropped just because a VIX candle happened to be missing that timestamp -
+    extract_features falls back to neutral defaults wherever vix_close ends up
+    NaN (or is absent altogether, e.g. in tests that don't care about VIX)."""
+    vix_slim = vix_df[["date", "close"]].rename(columns={"close": "vix_close"})
+    return price_df.merge(vix_slim, on="date", how="left")
 
 
 def extract_features(daily_df: pd.DataFrame, intraday_df: pd.DataFrame, index: int) -> dict[str, float]:
@@ -101,6 +129,55 @@ def extract_features(daily_df: pd.DataFrame, intraday_df: pd.DataFrame, index: i
     timestamp_naive = timestamp.replace(tzinfo=None)
     minutes_since_open = (timestamp_naive - datetime.combine(timestamp_naive.date(), MARKET_OPEN_TIME)).total_seconds() / 60
 
+    # VIX features: current live level, its recent trend, and where that level
+    # sits relative to the trailing window - all computed only from data up to
+    # and including this candle (intraday) or strictly prior days (daily), same
+    # no-lookahead contract as everything else here. Falls back to neutral
+    # defaults (0.0 / 0.0 / 0.5) rather than raising when vix_close isn't
+    # present at all - keeps this function usable on data that hasn't had VIX
+    # merged in (e.g. existing tests, or a caller that skips it deliberately).
+    has_vix = "vix_close" in intraday_df.columns and pd.notna(intraday_df["vix_close"].iloc[index])
+    if has_vix:
+        vix_series = intraday_df["vix_close"]
+        vix_level = vix_series.iloc[index]
+        vix_lookback_index = max(index - VIX_LOOKBACK, 0)
+        prior_vix = vix_series.iloc[vix_lookback_index]
+        vix_change = (vix_level - prior_vix) if pd.notna(prior_vix) else 0.0
+
+        vix_daily_hist = daily_df["vix_close"].dropna() if "vix_close" in daily_df.columns else pd.Series(dtype=float)
+        vix_daily_hist = vix_daily_hist.iloc[-VIX_PCTILE_WINDOW:]
+        vix_pctile = (vix_daily_hist < vix_level).mean() if len(vix_daily_hist) >= VIX_PCTILE_MIN_HISTORY else 0.5
+    else:
+        vix_level, vix_change, vix_pctile = 0.0, 0.0, 0.5
+
+    # Options Greeks (added 2026-08-12, second piece of the CALL-improvement plan
+    # alongside VIX): computed via Black-Scholes at the strike the bot would
+    # actually trade if it signaled here (nearest_strike to the current price),
+    # using the live India VIX reading as the volatility input - VIX literally
+    # IS the market's own implied-vol estimate, a more honest input here than a
+    # lagging realized-vol calculation would be. Reuses has_vix/vix_level from
+    # the block above: without a real live VIX reading there's no sound
+    # volatility input to price Greeks with, so these default to neutral (0.0)
+    # too rather than guessing one. Only gamma/theta/vega are included, not
+    # delta - an ATM option's delta sits close to 0.5 by construction (that's
+    # what "at the money" means) and is already largely redundant with the
+    # existing fib/momentum features; gamma/theta/vega each carry genuinely new
+    # information (convexity, time-decay pressure, vol-sensitivity) that no
+    # other feature here captures. Priced as a call throughout (gamma and vega
+    # are identical for a call and a put at the same strike/expiry, by put-call
+    # parity - see black_scholes_greeks), so this one calculation covers both
+    # the call_model and put_model consumers of this same feature vector.
+    if has_vix:
+        atm_strike = nearest_strike(price)
+        atm_expiry = next_weekly_expiry(timestamp_naive.date())
+        atm_tte = time_to_expiry_years(timestamp_naive, atm_expiry)
+        greeks = black_scholes_greeks(price, atm_strike, atm_tte, vix_level / 100, "CE")
+        atm_gamma = greeks["gamma"]
+        atm_theta = greeks["theta"]
+        atm_vega = greeks["vega"]
+    else:
+        atm_gamma, atm_theta, atm_vega = 0.0, 0.0, 0.0
+
     return {
         "rsi_value": rsi_value,
         "rsi_change": rsi_change,
@@ -118,4 +195,10 @@ def extract_features(daily_df: pd.DataFrame, intraday_df: pd.DataFrame, index: i
         "is_shooting_star": float(shooting_star),
         "minutes_since_open": minutes_since_open,
         "day_of_week": float(timestamp.weekday()),
+        "vix_level": vix_level,
+        "vix_change": vix_change,
+        "vix_pctile": vix_pctile,
+        "atm_gamma": atm_gamma,
+        "atm_theta": atm_theta,
+        "atm_vega": atm_vega,
     }
