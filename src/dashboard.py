@@ -111,6 +111,7 @@ def start_bot(
     max_trades_per_day: int = 1,
     max_capital_per_trade: float = MAX_CAPITAL_PER_TRADE,
     put_only: bool = True,
+    block_calls_early_session: bool = False,
     split_session: bool = False,
     max_trades_per_session: int = 6,
 ) -> None:
@@ -123,6 +124,8 @@ def start_bot(
     ]
     if not put_only:
         cmd.append("--allow-calls")
+    if block_calls_early_session:
+        cmd.append("--block-calls-early-session")
     if split_session:
         cmd += ["--split-session", "--max-trades-per-session", str(max_trades_per_session)]
     process = subprocess.Popen(
@@ -137,6 +140,7 @@ def start_bot(
     st.session_state.bot_start_time = datetime.now()
     st.session_state.bot_max_trades = max_trades_per_day
     st.session_state.bot_put_only = put_only
+    st.session_state.bot_block_calls_early_session = block_calls_early_session
     st.session_state.bot_max_capital_per_trade = max_capital_per_trade
     st.session_state.bot_split_session = split_session
     st.session_state.bot_max_trades_per_session = max_trades_per_session
@@ -223,18 +227,32 @@ def render_bot_control() -> bool:
         )
 
         allow_calls_mode = st.checkbox(
-            "Allow CALL trades",
+            "Allow CALL trades (primary 15-min model)",
             value=False,
             disabled=is_running,
             help=(
-                "Off by default - PUT-only. CALL's confidence collapses at high thresholds in BOTH "
-                "the primary and early-session models (confirmed 2026-07-24) - a consistent, "
-                "cross-model weakness, not one bad stretch. Check this box only to deliberately "
-                "gather more CALL data."
+                "Off by default - PUT-only. This model's CALL confidence is still flat/unreliable even "
+                "after adding VIX + Greeks features (confirmed 2026-08-12). Check this box only to "
+                "deliberately gather more CALL data - the early-session model below is handled separately "
+                "and now allows CALL by default, since its calibration is genuinely good."
             ),
         )
         if allow_calls_mode:
-            st.warning("CALL signals will be taken this run, despite confirmed weak precision in both models.")
+            st.warning("CALL signals will be taken this run on the PRIMARY model, despite its still-weak precision.")
+
+        block_early_calls_mode = st.checkbox(
+            "Block CALL trades on early-session model too (5-min)",
+            value=False,
+            disabled=is_running,
+            help=(
+                "Off by default - CALL IS allowed on the early-session (5-min) model. Its CALL calibration "
+                "is now genuinely good (confirmed 2026-08-12: 62%->80% precision climbing cleanly with "
+                "confidence) - unlike the primary model above, which stays PUT-only by default. Check this "
+                "box to be extra conservative and block CALL everywhere instead."
+            ),
+        )
+        if block_early_calls_mode:
+            st.info("CALL signals will be blocked on the early-session model too this run (extra-conservative mode).")
 
         kill_switch_on = KILL_SWITCH_PATH.exists()
         if kill_switch_on:
@@ -250,6 +268,7 @@ def render_bot_control() -> bool:
                     max_trades_per_day=int(max_trades),
                     max_capital_per_trade=float(max_capital),
                     put_only=not allow_calls_mode,
+                    block_calls_early_session=block_early_calls_mode,
                     split_session=split_session_mode,
                     max_trades_per_session=int(max_trades_per_session),
                 )
@@ -280,8 +299,9 @@ def render_bot_control() -> bool:
                     trades_note = f" · max {st.session_state.bot_max_trades} trades/day" if st.session_state.get("bot_max_trades", 1) != 1 else ""
                 cap = st.session_state.get("bot_max_capital_per_trade", MAX_CAPITAL_PER_TRADE)
                 capital_note = f" · cap Rs {cap:,.0f}/trade" if cap != MAX_CAPITAL_PER_TRADE else ""
-                calls_note = "" if st.session_state.get("bot_put_only", True) else " · CALLs allowed"
-                st.caption(f"{trades_note}{capital_note}{calls_note}".lstrip(" ·") or "​")
+                calls_note = "" if st.session_state.get("bot_put_only", True) else " · primary CALLs allowed"
+                early_calls_note = " · early-session CALLs blocked" if st.session_state.get("bot_block_calls_early_session", False) else ""
+                st.caption(f"{trades_note}{capital_note}{calls_note}{early_calls_note}".lstrip(" ·") or "​")
 
         st.caption(
             "Note: if you close/restart this dashboard while the bot is running, it loses track of that "

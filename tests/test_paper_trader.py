@@ -22,6 +22,7 @@ from paper_trader import (
     _build_early_session_signal_fn,
     _circuit_breaker_tripped,
     _current_session,
+    _effective_put_only,
     _is_process_alive,
     _is_stale_signal,
     _kill_switch_engaged,
@@ -354,3 +355,21 @@ def test_todays_realized_pnl_zero_when_nothing_logged_today(tmp_path):
     csv_path = tmp_path / "paper_trades.csv"
     pd.DataFrame([{"date": "2026-08-11", "pnl_rupees": -1000.0}]).to_csv(csv_path, index=False)
     assert _todays_realized_pnl(csv_path, date(2026, 8, 12)) == 0.0
+
+
+def test_effective_put_only_uses_primary_setting_when_not_early_session():
+    # Primary model's own put_only applies, regardless of early_session_put_only.
+    assert _effective_put_only(False, put_only=True, early_session_put_only=False) is True
+    assert _effective_put_only(False, put_only=False, early_session_put_only=True) is False
+
+
+def test_effective_put_only_uses_early_session_setting_when_early_session():
+    # Early-session model's own early_session_put_only applies, regardless of put_only.
+    assert _effective_put_only(True, put_only=True, early_session_put_only=False) is False
+    assert _effective_put_only(True, put_only=False, early_session_put_only=True) is True
+
+
+def test_effective_put_only_matches_the_2026_08_12_defaults():
+    # The actual defaults shipped: primary stays PUT-only, early-session allows CALL.
+    assert _effective_put_only(used_early_session_model=False, put_only=True, early_session_put_only=False) is True
+    assert _effective_put_only(used_early_session_model=True, put_only=True, early_session_put_only=False) is False
