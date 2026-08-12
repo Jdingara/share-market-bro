@@ -65,6 +65,10 @@ Add `--max-trades-per-day N` (default **1**, the intended discipline) to allow m
 
 Add `--max-capital-per-trade N` (default **₹2,00,000**) to cap how much of the balance is ever risked on a single trade, no matter how large the account has compounded to - anything above the cap simply stays idle/untouched. **Also available directly on the dashboard** (a "Max capital per trade (Rs)" box next to the Start button).
 
+**Go-live safety net (added 2026-08-12, first piece of the agreed go-live plan, already active in paper mode):**
+- **Kill switch** - an emergency stop that halts new entries and force-closes any open position within one poll interval (up to ~15s), independent of the dashboard or which terminal the bot was launched from. Manage it with `py src/kill_switch.py on` / `off` / `status`, or the dashboard's Kill Switch button.
+- **Daily loss circuit breaker** - stops taking new trades for the rest of the day once today's realized loss reaches `--max-daily-loss-pct` (default **10%**, i.e. 2x the single-trade stop-loss) of the capital the day started with. Any position already open when it trips still runs its normal exit. Survives a bot restart mid-day - it re-sums today's already-logged trades from `paper_trades.csv` on startup rather than resetting to zero.
+
 **PUT-only by default** - CALL's confidence collapses at high thresholds in both the primary and early-session models (confirmed 2026-07-24), a consistent cross-model weakness. Add `--allow-calls` to take CALL signals too. **Also available on the dashboard** ("Allow CALL trades" checkbox, unchecked by default).
 
 Add `--split-session` to use two independent trade quotas instead of one flat daily cap: up to `--max-trades-per-session N` (default **6**) trades before 1:15 PM (morning, early-session model), then up to N more from 1:15 PM onward (afternoon, primary model) - up to 2N trades/day total. If the morning quota fills before 1:15, new entries pause (not end the day) until the afternoon quota opens. Overrides `--max-trades-per-day` when set. **Also available on the dashboard** ("Split into morning/afternoon sessions" checkbox).

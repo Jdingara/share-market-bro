@@ -1,10 +1,11 @@
 """Unit tests for paper_trader.py's pure decision logic (no live API needed)."""
 
 import sys
-from datetime import datetime, time
+from datetime import date, datetime, time
 from pathlib import Path
 from unittest.mock import patch
 
+import pandas as pd
 import pytest
 from kiteconnect.exceptions import TokenException
 
@@ -19,13 +20,16 @@ from paper_trader import (
     DuplicateProcessError,
     _acquire_lock,
     _build_early_session_signal_fn,
+    _circuit_breaker_tripped,
     _current_session,
     _is_process_alive,
     _is_stale_signal,
+    _kill_switch_engaged,
     _monitor_position_until_exit,
     _reauthenticate,
     _record_trade_slot,
     _release_lock,
+    _todays_realized_pnl,
     _trade_slot_available,
     check_exit_condition,
 )
@@ -275,3 +279,78 @@ def test_monitor_position_survives_a_failed_reauth_attempt_too():
     assert exit_premium == 95.0
     assert kite == "recovered_kite"
     assert reauth_calls["n"] == 2
+
+
+def test_monitor_position_force_closes_immediately_when_kill_switch_engaged():
+    # Must not wait for target/stop-loss/EOD once the kill switch is on - the whole
+    # point is an emergency stop that can't get stuck behind a position's normal exit.
+    with patch("paper_trader.time_module.sleep"), \
+         patch("paper_trader._kill_switch_engaged", return_value=True), \
+         patch("paper_trader.get_option_premium", return_value=101.0) as mock_get_premium:
+        kite, exit_reason, exit_premium = _monitor_position_until_exit("kite", "NIFTY123PE", 100.0)
+
+    assert exit_reason == "KILL_SWITCH"
+    assert exit_premium == 101.0
+    assert kite == "kite"
+    mock_get_premium.assert_called_once()
+
+
+def test_monitor_position_kill_switch_falls_back_to_entry_price_if_quote_fails():
+    # Even if fetching a live exit price fails, the kill switch must still terminate
+    # monitoring immediately rather than looping and retrying like a normal exit would.
+    with patch("paper_trader.time_module.sleep"), \
+         patch("paper_trader._kill_switch_engaged", return_value=True), \
+         patch("paper_trader.get_option_premium", side_effect=TokenException("still broken")):
+        kite, exit_reason, exit_premium = _monitor_position_until_exit("kite", "NIFTY123PE", 100.0)
+
+    assert exit_reason == "KILL_SWITCH"
+    assert exit_premium == 100.0  # entry_premium fallback
+
+
+def test_kill_switch_engaged_reflects_file_presence(tmp_path):
+    switch_path = tmp_path / "KILL_SWITCH"
+    assert not _kill_switch_engaged(switch_path)
+    switch_path.write_text("on")
+    assert _kill_switch_engaged(switch_path)
+
+
+def test_circuit_breaker_not_tripped_within_limit():
+    # -5% loss against a 10% limit shouldn't trip it.
+    assert not _circuit_breaker_tripped(daily_pnl=-500.0, day_start_capital=10000.0, max_daily_loss_pct=0.10)
+
+
+def test_circuit_breaker_tripped_at_exact_limit():
+    assert _circuit_breaker_tripped(daily_pnl=-1000.0, day_start_capital=10000.0, max_daily_loss_pct=0.10)
+
+
+def test_circuit_breaker_tripped_beyond_limit():
+    assert _circuit_breaker_tripped(daily_pnl=-1500.0, day_start_capital=10000.0, max_daily_loss_pct=0.10)
+
+
+def test_circuit_breaker_ignores_profit():
+    assert not _circuit_breaker_tripped(daily_pnl=2000.0, day_start_capital=10000.0, max_daily_loss_pct=0.10)
+
+
+def test_circuit_breaker_never_trips_with_zero_start_capital():
+    # Guards div-by-zero-shaped edge case (shouldn't happen in practice, but must not crash).
+    assert not _circuit_breaker_tripped(daily_pnl=-100.0, day_start_capital=0.0, max_daily_loss_pct=0.10)
+
+
+def test_todays_realized_pnl_zero_when_no_csv_yet(tmp_path):
+    assert _todays_realized_pnl(tmp_path / "paper_trades.csv", date(2026, 8, 12)) == 0.0
+
+
+def test_todays_realized_pnl_sums_only_todays_rows(tmp_path):
+    csv_path = tmp_path / "paper_trades.csv"
+    pd.DataFrame([
+        {"date": "2026-08-11", "pnl_rupees": -1000.0},
+        {"date": "2026-08-12", "pnl_rupees": 300.0},
+        {"date": "2026-08-12", "pnl_rupees": -150.0},
+    ]).to_csv(csv_path, index=False)
+    assert _todays_realized_pnl(csv_path, date(2026, 8, 12)) == pytest.approx(150.0)
+
+
+def test_todays_realized_pnl_zero_when_nothing_logged_today(tmp_path):
+    csv_path = tmp_path / "paper_trades.csv"
+    pd.DataFrame([{"date": "2026-08-11", "pnl_rupees": -1000.0}]).to_csv(csv_path, index=False)
+    assert _todays_realized_pnl(csv_path, date(2026, 8, 12)) == 0.0

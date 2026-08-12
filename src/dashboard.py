@@ -28,6 +28,11 @@ BACKTEST_CSV = PROJECT_ROOT / "data" / "backtest_results" / "trades.csv"
 PAPER_TRADES_CSV = PROJECT_ROOT / "data" / "paper_trades" / "paper_trades.csv"
 LIVE_LOG_PATH = PROJECT_ROOT / "data" / "paper_trades" / "live_log.txt"
 PAPER_TRADER_SCRIPT = PROJECT_ROOT / "src" / "paper_trader.py"
+# Same path paper_trader.py's KILL_SWITCH_PATH points at - defined independently
+# here (not imported) so the dashboard doesn't have to pull in paper_trader.py's
+# heavier imports (ml_signal, kiteconnect, etc.) just for one path constant, same
+# as PAPER_TRADES_CSV above already does its own thing rather than importing it.
+KILL_SWITCH_PATH = PROJECT_ROOT / "data" / "paper_trades" / "KILL_SWITCH"
 
 st.set_page_config(page_title="Share Market Bro", page_icon="\U0001F4C8", layout="wide")
 
@@ -231,7 +236,14 @@ def render_bot_control() -> bool:
         if allow_calls_mode:
             st.warning("CALL signals will be taken this run, despite confirmed weak precision in both models.")
 
-        col1, col2, col3 = st.columns([1, 1, 3])
+        kill_switch_on = KILL_SWITCH_PATH.exists()
+        if kill_switch_on:
+            st.error(
+                "\U0001F6D1 Kill switch is ON - the bot (if running) will stop new entries and force-close "
+                "any open position within seconds. Clear it below before starting a new run."
+            )
+
+        col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
         with col1:
             if st.button("▶ Start", disabled=is_running, type="primary", width="stretch"):
                 start_bot(
@@ -247,6 +259,19 @@ def render_bot_control() -> bool:
                 stop_bot()
                 st.rerun()
         with col3:
+            if kill_switch_on:
+                if st.button("Clear kill switch", width="stretch"):
+                    KILL_SWITCH_PATH.unlink(missing_ok=True)
+                    st.rerun()
+            else:
+                if st.button("\U0001F6D1 Kill Switch", width="stretch",
+                              help="Emergency stop: halts new entries and force-closes an open position "
+                                   "within one poll interval (up to ~15s), whether the bot was started "
+                                   "here or from a terminal."):
+                    KILL_SWITCH_PATH.parent.mkdir(parents=True, exist_ok=True)
+                    KILL_SWITCH_PATH.write_text("Kill switch engaged manually via the dashboard.\n")
+                    st.rerun()
+        with col4:
             if is_running:
                 if st.session_state.get("bot_split_session", False):
                     n = st.session_state.get("bot_max_trades_per_session", 6)

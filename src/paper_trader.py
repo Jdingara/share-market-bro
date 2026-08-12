@@ -9,6 +9,16 @@ No real orders are ever placed here (kite.place_order is never called) -
 every "trade" is simulated bookkeeping against real market prices. This is
 the validation step between backtesting (Phase 3/6, simulated premiums) and
 live trading (Phase 5, real orders).
+
+Carries the two pieces of the go-live safety net agreed 2026-08-06, first in
+the build order because everything after it (CALL fixes, real order
+placement) should sit on top of a working stop mechanism, not be the first
+thing to get one: a manual KILL_SWITCH file (see KILL_SWITCH_PATH, managed via
+`py src/kill_switch.py`) that halts new entries and force-closes any open
+position within one poll interval, and an automatic daily loss circuit
+breaker (MAX_DAILY_LOSS_PCT) that halts new entries once today's realized
+loss reaches a set share of the day's starting capital. Both are already
+active in paper mode so they're proven out before any real money is at risk.
 """
 
 from __future__ import annotations
@@ -58,6 +68,17 @@ MIN_CANDLES_FOR_SIGNAL = RSI_PERIOD + RSI_TURN_LOOKBACK
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PAPER_TRADES_DIR = PROJECT_ROOT / "data" / "paper_trades"
 LOCK_FILE_PATH = PAPER_TRADES_DIR / "paper_trader.lock"
+PAPER_TRADES_CSV_PATH = PAPER_TRADES_DIR / "paper_trades.csv"
+
+# Emergency stop, first piece of the go-live safety net (agreed 2026-08-06, before
+# any real order-placement code gets written). Presence of this file means "stop
+# now" - checked before every new entry AND while a position is open (see
+# _monitor_position_until_exit), so it can't get stuck behind a position that
+# hasn't hit its normal exit yet. Deliberately a plain file, not a dashboard-only
+# toggle - it works even if the dashboard is closed or the bot was launched from a
+# terminal, and survives the bot process being restarted. Use `py src/kill_switch.py
+# on/off/status` or the dashboard's Kill Switch button to manage it.
+KILL_SWITCH_PATH = PAPER_TRADES_DIR / "KILL_SWITCH"
 
 MARKET_CLOSE_TIME = time(15, 30)
 FORCE_CLOSE_TIME = time(15, 25)  # force-close any open paper position before real market close
@@ -77,6 +98,16 @@ POSITION_POLL_INTERVAL_SECONDS = 15
 
 TARGET_PCT = 0.10
 STOP_LOSS_PCT = 0.05
+
+# Daily loss circuit breaker, the other half of the 2026-08-06 go-live safety-net
+# plan. 10% is 2x the single-trade STOP_LOSS_PCT - enough headroom that one normal
+# stop-loss never trips it on its own, but tight enough to actually cap a bad day
+# with several trades (max_trades_per_day > 1, or --split-session) from digging a
+# much deeper hole than a single trade ever could. Expressed as a share of the
+# capital the day STARTED with (see day_start_capital in _run_impl), not the
+# shrinking current balance, so the limit doesn't get easier to hit as losses
+# compound within the same day.
+MAX_DAILY_LOSS_PCT = 0.10
 
 DAILY_HISTORY_DAYS = 100
 
@@ -191,6 +222,36 @@ def _trade_slot_available(
     return session_slots[_current_session(now)] < max_trades_per_session
 
 
+def _kill_switch_engaged(kill_switch_path: Path = KILL_SWITCH_PATH) -> bool:
+    """True when a human has dropped a KILL_SWITCH file to force an immediate stop.
+    Takes kill_switch_path as a parameter (same pattern as _acquire_lock's lock_path)
+    so tests can point it at a temp file instead of the real production path."""
+    return kill_switch_path.exists()
+
+
+def _todays_realized_pnl(csv_path: Path, today: date) -> float:
+    """Sums pnl_rupees for every trade already logged today. Used to seed the daily
+    loss circuit breaker correctly even if the bot restarts mid-day (e.g. after a
+    crash or a manual restart) - a plain in-memory counter would silently forget
+    losses already taken earlier that day, defeating the point of the breaker on
+    exactly the day it matters most."""
+    if not csv_path.exists():
+        return 0.0
+    df = pd.read_csv(csv_path)
+    if df.empty or "date" not in df.columns or "pnl_rupees" not in df.columns:
+        return 0.0
+    todays_rows = df[df["date"] == today.isoformat()]
+    return float(todays_rows["pnl_rupees"].sum())
+
+
+def _circuit_breaker_tripped(daily_pnl: float, day_start_capital: float, max_daily_loss_pct: float) -> bool:
+    """Pure decision logic (no I/O), testable without a live feed. See MAX_DAILY_LOSS_PCT
+    for why this compares against the day's STARTING capital, not the current balance."""
+    if day_start_capital <= 0:
+        return False
+    return daily_pnl <= -day_start_capital * max_daily_loss_pct
+
+
 def _is_stale_signal(current_candle_time, last_entry_candle_time) -> bool:
     """Pure decision logic (no I/O), testable without a live feed. True when this
     signal is based on the same (or an older) candle as the last entry already
@@ -239,11 +300,26 @@ def _monitor_position_until_exit(kite, tradingsymbol: str, entry_premium: float)
     top of the first, since it no longer knew one was open. Even a failed
     reauth attempt must not escape this loop either - staying here and retrying
     next poll is always safer than falling through to code that forgets this
-    position exists."""
+    position exists.
+
+    Also checks the kill switch (see KILL_SWITCH_PATH) on every poll - an
+    emergency stop must not be able to get stuck waiting behind a position's
+    normal target/stop-loss/EOD exit, which could otherwise be hours away."""
     exit_reason = None
     exit_premium = entry_premium
     while exit_reason is None:
         time_module.sleep(POSITION_POLL_INTERVAL_SECONDS)
+        if _kill_switch_engaged():
+            print(
+                f"[{datetime.now().time()}] KILL SWITCH engaged - closing {tradingsymbol} now "
+                "instead of waiting for its normal target/stop-loss/EOD exit."
+            )
+            try:
+                exit_premium = _call_with_retry(get_option_premium, kite, tradingsymbol)
+            except Exception as exc:
+                print(f"Could not fetch a live exit price ({exc!r}) - recording the exit at entry price instead.")
+                exit_premium = entry_premium
+            return kite, "KILL_SWITCH", exit_premium
         try:
             current_premium = _call_with_retry(get_option_premium, kite, tradingsymbol)
         except TokenException:
@@ -288,7 +364,7 @@ def check_exit_condition(
 
 def _log_trade(trade: PaperTrade) -> Path:
     PAPER_TRADES_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = PAPER_TRADES_DIR / "paper_trades.csv"
+    out_path = PAPER_TRADES_CSV_PATH
     pd.DataFrame([asdict(trade)]).to_csv(out_path, mode="a", header=not out_path.exists(), index=False)
     return out_path
 
@@ -347,6 +423,7 @@ def _run_impl(
     put_only: bool = True,
     split_session: bool = False,
     max_trades_per_session: int = 6,
+    max_daily_loss_pct: float = MAX_DAILY_LOSS_PCT,
 ) -> None:
     print(f"Signal source for today: {signal_source}")
     if split_session:
@@ -398,6 +475,13 @@ def _run_impl(
     print(f"Starting capital: Rs {capital:,.2f}")
     print(f"Max capital per trade: Rs {max_capital_per_trade:,.2f}")
 
+    day_start_capital = capital
+    daily_pnl = _todays_realized_pnl(PAPER_TRADES_CSV_PATH, date.today())
+    if daily_pnl != 0.0:
+        print(f"Already have Rs {daily_pnl:,.2f} of realized P&L logged today (resuming mid-day) - circuit breaker starts from there.")
+    daily_loss_limit = day_start_capital * max_daily_loss_pct
+    print(f"Daily loss circuit breaker: stop new entries if today's P&L reaches -Rs {daily_loss_limit:,.2f} ({max_daily_loss_pct:.0%} of start-of-day capital).")
+
     start_time = datetime.now()
     trades_taken_today = 0
     session_slots = {"morning": 0, "afternoon": 0}
@@ -410,6 +494,18 @@ def _run_impl(
             break
         if now.time() >= MARKET_CLOSE_TIME:
             print("Market closed, stopping for the day.")
+            break
+        if _kill_switch_engaged():
+            print(
+                f"[{now.time()}] KILL SWITCH engaged (data/paper_trades/KILL_SWITCH present) - stopping, "
+                "no new entries. Run `py src/kill_switch.py off` (or delete that file) to resume."
+            )
+            break
+        if _circuit_breaker_tripped(daily_pnl, day_start_capital, max_daily_loss_pct):
+            print(
+                f"[{now.time()}] DAILY LOSS CIRCUIT BREAKER TRIPPED: today's realized P&L is Rs {daily_pnl:,.2f} "
+                f"(limit -Rs {daily_loss_limit:,.2f}) - no new entries for the rest of today."
+            )
             break
         if not _trade_slot_available(now, trades_taken_today, session_slots, max_trades_per_day, max_trades_per_session, split_session):
             if split_session and _current_session(now) == "morning":
@@ -532,6 +628,7 @@ def _run_impl(
             pct_change = (exit_premium - entry_premium) / entry_premium
             new_capital = apply_trade_pnl(capital, lots, entry_premium, exit_premium)
             pnl_rupees = new_capital - capital
+            daily_pnl += pnl_rupees
             save_capital(new_capital)
             print(
                 f"PAPER EXIT: {exit_reason} @ {exit_premium} ({pct_change:+.2%}) | "
@@ -640,6 +737,12 @@ if __name__ == "__main__":
                               "Overrides --max-trades-per-day when set.")
     parser.add_argument("--max-trades-per-session", type=int, default=6,
                          help="Trade cap per session when --split-session is set (default: 6, i.e. up to 12/day).")
+    parser.add_argument("--max-daily-loss-pct", type=float, default=MAX_DAILY_LOSS_PCT,
+                         # NOTE: literal %% (not %), since argparse's help formatter treats a lone
+                         # % as its own substitution syntax and raises otherwise.
+                         help=f"Circuit breaker: stop taking new trades for the day once today's realized loss "
+                              f"reaches this share of start-of-day capital (default: {MAX_DAILY_LOSS_PCT * 100:.0f}%%)."
+                              " Any position already open when it trips still runs to its normal exit.")
     args = parser.parse_args()
     run(
         max_minutes=args.max_minutes,
@@ -649,4 +752,5 @@ if __name__ == "__main__":
         put_only=not args.allow_calls,
         split_session=args.split_session,
         max_trades_per_session=args.max_trades_per_session,
+        max_daily_loss_pct=args.max_daily_loss_pct,
     )
