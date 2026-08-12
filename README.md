@@ -39,7 +39,9 @@ If this fails with a CAPTCHA error, Zerodha has put a CAPTCHA on the login page 
 ```
 py src/manual_login.py
 ```
-It opens your browser automatically and captures the login result by itself (a tiny local server catches Zerodha's redirect) - no copying URLs or switching windows, just log in and solve the CAPTCHA. It caches a fresh token that `auth.py`/`paper_trader.py` will pick up automatically afterward - no other changes needed, and any already-running bot process recovers on its own within its normal retry cycle, no restart required.
+It opens your browser to the login page automatically. Log in (solving the CAPTCHA yourself), then copy the URL you land on afterward and paste it back into the terminal when asked - the whole thing takes under a minute. It caches a fresh token that `auth.py`/`paper_trader.py` will pick up automatically afterward - no other changes needed, and any already-running bot process recovers on its own within its normal retry cycle, no restart required.
+
+There's also a `--auto` mode (`py src/manual_login.py --auto`) that tries to capture the redirect itself with no copy-paste at all - it's not the default because it's confirmed unreliable on at least one machine so far (likely a Windows Firewall rule blocking the browser from reaching the local capture server). Worth trying again after checking Windows Security -> Firewall & network protection -> Allow an app through firewall for `python.exe`.
 
 **Fetch historical data** (cached to `data/historical/` as CSV, so repeated runs don't re-hit the API):
 ```

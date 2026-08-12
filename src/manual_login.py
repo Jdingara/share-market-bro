@@ -8,17 +8,19 @@ Run this directly whenever auth.py reports a CAPTCHA error:
 
     py src/manual_login.py
 
-It opens your browser to the login page automatically, runs a tiny local
-server to catch Zerodha's redirect (which has consistently landed on
-127.0.0.1:8000 for this app every time so far - confirmed live across
-multiple real days), and finishes the login itself the moment you're done -
-no copying URLs or switching windows required. The ONLY manual step is
-logging in and solving the CAPTCHA yourself in the browser that opens.
+Opens the login page in your browser automatically. You log in (solving the
+CAPTCHA yourself), copy the URL you land on afterward, and paste it back
+here - the whole thing takes well under a minute once you know the steps.
 
-If the automatic capture doesn't work for some reason (port already in use,
-the redirect goes somewhere unexpected, etc.), it falls back to the old
-copy-paste-the-URL approach after a short wait, so there's always a way to
-finish even if the fast path fails.
+An automatic-capture mode also exists (`--auto`) - it runs a tiny local
+server to catch Zerodha's redirect itself, so there's nothing to copy or
+paste at all. It's NOT the default: confirmed live 2026-08-12 that it
+reliably fails on this machine (Chrome can't reach the local server after
+the redirect - likely a Windows Firewall rule blocking it, not yet
+diagnosed) and just wastes minutes waiting before falling back anyway. Try
+`--auto` again after checking Windows Firewall settings (Windows Security ->
+Firewall & network protection -> Allow an app through firewall -> look for
+python.exe) if you want to revisit it.
 
 Caches the resulting token to the exact same file auth.py's login() reads,
 so any already-running paper_trader.py process picks it up on its next
@@ -27,6 +29,7 @@ retry automatically - no restart needed.
 
 from __future__ import annotations
 
+import argparse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
@@ -38,11 +41,6 @@ from auth import AuthError, _require_env, _save_cached_token
 
 REDIRECT_HOST = "127.0.0.1"
 REDIRECT_PORT = 8000
-# Was 180 (3 min) - too short. Found live 2026-08-11: a real login (with a busy
-# morning, plus a 2FA/TOTP step) took longer than that, so the automatic
-# capture gave up and fell back to the manual copy-paste flow it exists to
-# avoid. Generous on purpose - this is a passive wait, no cost to waiting
-# longer, and the whole point is to not force the user to rush.
 CAPTURE_TIMEOUT_SECONDS = 600
 
 _SUCCESS_PAGE = b"""<html><body style="font-family: sans-serif; text-align: center; margin-top: 15%;">
@@ -115,24 +113,39 @@ def _try_automatic_capture(login_url: str) -> str | None:
     return captured.get("token")
 
 
+def _manual_flow(login_url: str) -> str:
+    print("1. Open this URL in a real browser and log in (you'll solve any CAPTCHA yourself):")
+    print(f"\n   {login_url}\n")
+    webbrowser.open(login_url)
+    print("2. After logging in, Zerodha will try to redirect you somewhere that likely won't")
+    print("   load (there's no server running to receive it) - that's expected. Just copy the")
+    print("   FULL URL from your browser's address bar at that point (it contains request_token).")
+    print()
+    pasted = input("3. Paste that URL (or just the request_token) here, then press Enter: ")
+    return _extract_request_token(pasted)
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Manual Kite Connect login, for when the login page requires a CAPTCHA.")
+    parser.add_argument(
+        "--auto", action="store_true",
+        help="Try automatic redirect capture instead of the default copy-paste flow - confirmed "
+             "unreliable on at least one machine (2026-08-12), off by default for that reason.",
+    )
+    args = parser.parse_args()
+
     api_key = _require_env("KITE_API_KEY")
     api_secret = _require_env("KITE_API_SECRET")
 
     login_url = f"https://kite.zerodha.com/connect/login?api_key={api_key}&v=3"
 
-    request_token = _try_automatic_capture(login_url)
-
-    if request_token is None:
-        print("\nAutomatic capture didn't complete in time - falling back to the manual method.")
-        print("1. Open this URL in a real browser and log in, if you haven't already:")
-        print(f"\n   {login_url}\n")
-        print("2. After logging in, Zerodha will try to redirect you somewhere that likely won't")
-        print("   load - that's expected. Just copy the FULL URL from your browser's address bar")
-        print("   at that point (it contains request_token).")
-        print()
-        pasted = input("3. Paste that URL (or just the request_token) here, then press Enter: ")
-        request_token = _extract_request_token(pasted)
+    if args.auto:
+        request_token = _try_automatic_capture(login_url)
+        if request_token is None:
+            print("\nAutomatic capture didn't complete in time - falling back to the manual method.")
+            request_token = _manual_flow(login_url)
+    else:
+        request_token = _manual_flow(login_url)
 
     kite = KiteConnect(api_key=api_key)
     session_data = kite.generate_session(request_token, api_secret=api_secret)
