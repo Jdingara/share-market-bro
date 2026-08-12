@@ -38,7 +38,12 @@ from auth import AuthError, _require_env, _save_cached_token
 
 REDIRECT_HOST = "127.0.0.1"
 REDIRECT_PORT = 8000
-CAPTURE_TIMEOUT_SECONDS = 180
+# Was 180 (3 min) - too short. Found live 2026-08-11: a real login (with a busy
+# morning, plus a 2FA/TOTP step) took longer than that, so the automatic
+# capture gave up and fell back to the manual copy-paste flow it exists to
+# avoid. Generous on purpose - this is a passive wait, no cost to waiting
+# longer, and the whole point is to not force the user to rush.
+CAPTURE_TIMEOUT_SECONDS = 600
 
 _SUCCESS_PAGE = b"""<html><body style="font-family: sans-serif; text-align: center; margin-top: 15%;">
 <h2>Logged in - you can close this tab.</h2></body></html>"""
@@ -103,7 +108,7 @@ def _try_automatic_capture(login_url: str) -> str | None:
     print(f"(If it doesn't open, copy this URL manually: {login_url})\n")
     webbrowser.open(login_url)
 
-    print("Waiting for you to finish logging in...")
+    print(f"Waiting for you to finish logging in (up to {CAPTURE_TIMEOUT_SECONDS // 60} minutes, no rush)...")
     thread.join(timeout=CAPTURE_TIMEOUT_SECONDS)
     server.server_close()
 
