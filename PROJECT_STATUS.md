@@ -51,7 +51,7 @@ Build an autonomous bot that trades NIFTY 50 index options (calls and puts) thro
 | **5. Live trading** | Real Kite order API calls, safety guards (kill switch, daily loss circuit breaker), static-IP registration | ⬜ Not started |
 | **6. ML enhancement** | Feature-engineer OHLCV + indicators, train classifiers (Random Forest, Logistic Regression, Gradient Boosting) on historical labeled outcomes, compare against the rule-based signal | ✅ Built, honestly 4-way compared, and **now the live default** — see below |
 
-## Current Status (last updated: 2026-08-12)
+## Current Status (last updated: 2026-08-13)
 
 Phases 0 through 4 and Phase 6 are complete. Phase 4 (paper trading) is built and smoke-tested but **not yet run through a full live trading day** - it now runs on the Phase 6 Gradient Boosting (XGBoost) signal by default (see the 2026-07-07 decision below), so tomorrow's run will be the first real test of that combination.
 
@@ -410,8 +410,27 @@ Phases 0 through 4 and Phase 6 are complete. Phase 4 (paper trading) is built an
 
   120 tests passing (was 85 before this session's kill-switch work, 107 after VIX, 120 after Greeks). All new NIFTY + India VIX historical data (day/15min/5min) refreshed through today as part of this work.
 
+**Profit-generation strategy discussion opened, 2026-08-13 - full analysis of all 116 real paper trades run, first fix (time-of-day filter) built and shipped same day.**
+
+  User asked directly what would actually improve profit, not just safety - prompted a real statistical pass over every logged trade (not the backtest, the actual paper-trading history) plus the 200-day cached market data. Findings, most to least actionable:
+
+  1. **Time-of-day is the cleanest pattern in the data** (see below - built same day).
+  2. **Drawdown risk is a bigger concern than the profit question**: max drawdown from peak capital is **-38.46%** (-Rs 10,673), driven by a 6-trade losing streak compounding against ~80.4% average capital deployment per trade (near-max exposure every time). No position-sizing lever exists today - every trade sizes to however many lots the (capped) capital affords, regardless of streak risk. **Not yet acted on** - a real candidate for a fixed-fractional or confidence-scaled position-sizing scheme, flagged for a future round.
+  3. **Max Pain shadow-mode data now has enough samples (67 trades) to reconfirm the original 1-week finding**: `max_pain_agreed=YES` trades win 28.0%, `NO` trades win 42.1% - a 14-point gap that's held up as the sample grew 10x. Still purely logged, not used as a filter. **Not yet acted on.**
+  4. **Exit execution has a small negative skew**: STOPLOSS exits average -6.79% actual (nominal -5%), TARGET exits average +11.56% (nominal +10%) - the 15s position-poll interval lets real exits overshoot the exact bracket in both directions, and the overshoot currently cuts slightly against net P&L. **Not yet acted on.**
+  5. **Debit spreads instead of naked long options** - a structural strategy change (buy ATM, sell further OTM to cut premium cost and theta bleed), discussed as a bigger, more speculative idea. **Not yet acted on.**
+
+  A likely red herring was checked and ruled out before acting on anything: the 14:30-15:00 window looked like the single worst 30-minute bucket in the raw data (-Rs 8,011.25), worse than the whole morning problem combined - but tracing every trade in it found 3 of its 5 losses came from 2026-07-09/07-10, before `STOP_LOSS_PCT` was tightened from -10% to -5% (including one -24.76% loss, clearly a pre-fix artifact). Excluding those two dates, the window is only mildly negative across 5 different days - not a live pattern, and NOT included in the fix below. Same "verify before acting" discipline as every other finding in this project - a coarse "avoid 2:30-3pm" rule would have been wrong.
+
+  **Fix built same day: `EARLIEST_ENTRY_TIME = time(12, 30)`** (`paper_trader.py`) - no new entries before this wall-clock time, regardless of which model would otherwise be eligible. A cutoff scan across candidate times (10:30 through 13:15, 30-min steps) on the real trade history found 12:30 maximizes total P&L: 10:30-12:30 (entirely the early-session 5-min model's window, since the primary model can't fire before `SESSION_SPLIT_TIME`=13:15 regardless) lost -Rs 5,889.65 net across 32 trades; every 30-min window from 12:30 onward was net positive. Simulated on the real 116-trade history: skipping everything before 12:30 turns the actual +Rs 6,353.10 into **+Rs 12,242.75** (84 trades kept, win rate 41.3% -> 46.6%). Configurable via `--earliest-entry-time HH:MM` (default 12:30; e.g. `00:00` to deliberately gather more early-morning data, matching the project's existing pattern for `--allow-calls`) and a matching "No new entries before" time picker on the dashboard. New pure `_before_earliest_entry_time()`, 3 new tests, full suite now 126 passing. **Not yet live-verified** - the change didn't exist for any trading day yet at the time this was written; watch the first few real days under the new floor before treating the projected +Rs 12,242.75 as anything more than a historical-data simulation (same caveat as always: past trades aren't a guarantee of future ones, and this is still built on the same ~116-trade, ~1-month sample every other finding in this project has been built on).
+
 ## Open Decisions (resolve before relevant phase starts)
 
+- **Profit-generation ideas from the 2026-08-13 trade analysis, not yet acted on (time-of-day filter was #1 and is done - see Current Status):**
+  - **Position sizing / drawdown control** - ~80.4% average capital deployed per trade, no fixed-fractional or confidence-scaled sizing exists. Directly implicated in the -38.46% max drawdown seen so far (a 6-loss streak at near-max exposure). Candidate: risk a smaller, fixed % of capital per trade instead of however many lots the capped balance affords.
+  - **Promote Max Pain from shadow-mode logging to a real filter** - 14-point win-rate gap (28.0% vs 42.1%) now confirmed on 67 trades, not just the original week. Sitting unused.
+  - **Tighten exit-monitoring precision** - STOPLOSS/TARGET exits currently overshoot their nominal -5%/+10% bracket by ~1.5-1.8pp on average (15s poll interval), net slightly against P&L. Candidate: faster polling, especially during high-VIX windows now that VIX data is available live.
+  - **Debit spreads instead of naked long options** - a structural strategy change, not a tuning tweak. Buy ATM/sell further OTM to cut premium cost and theta bleed at the cost of a capped upside. Biggest to build, biggest potential shift - not started.
 - ~~Handle `TokenException` with an automatic re-login, not blind retry~~ **Resolved 2026-07-24, but shipped broken (missing `force=True`) - actually fixed and tested 2026-07-27.** See Current Status.
 
 - ~~Prevent duplicate `paper_trader.py` launches with a lock file~~ **Resolved 2026-07-24** - see Current Status.

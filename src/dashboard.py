@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from datetime import date, datetime
+from datetime import time as dt_time
 from pathlib import Path
 
 import altair as alt
@@ -28,6 +29,9 @@ BACKTEST_CSV = PROJECT_ROOT / "data" / "backtest_results" / "trades.csv"
 PAPER_TRADES_CSV = PROJECT_ROOT / "data" / "paper_trades" / "paper_trades.csv"
 LIVE_LOG_PATH = PROJECT_ROOT / "data" / "paper_trades" / "live_log.txt"
 PAPER_TRADER_SCRIPT = PROJECT_ROOT / "src" / "paper_trader.py"
+DEFAULT_EARLIEST_ENTRY_TIME = dt_time(12, 30)  # same default as paper_trader.py's EARLIEST_ENTRY_TIME -
+# see that constant's docstring for the real-trade-data analysis behind 12:30. Duplicated as a plain
+# value here rather than imported, for the same reason as KILL_SWITCH_PATH below.
 # Same path paper_trader.py's KILL_SWITCH_PATH points at - defined independently
 # here (not imported) so the dashboard doesn't have to pull in paper_trader.py's
 # heavier imports (ml_signal, kiteconnect, etc.) just for one path constant, same
@@ -114,6 +118,7 @@ def start_bot(
     block_calls_early_session: bool = False,
     split_session: bool = False,
     max_trades_per_session: int = 6,
+    earliest_entry_time: dt_time = DEFAULT_EARLIEST_ENTRY_TIME,
 ) -> None:
     LIVE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     log_fh = open(LIVE_LOG_PATH, "w")
@@ -121,6 +126,7 @@ def start_bot(
         sys.executable, "-u", str(PAPER_TRADER_SCRIPT),
         "--max-trades-per-day", str(max_trades_per_day),
         "--max-capital-per-trade", str(max_capital_per_trade),
+        "--earliest-entry-time", earliest_entry_time.strftime("%H:%M"),
     ]
     if not put_only:
         cmd.append("--allow-calls")
@@ -141,6 +147,7 @@ def start_bot(
     st.session_state.bot_max_trades = max_trades_per_day
     st.session_state.bot_put_only = put_only
     st.session_state.bot_block_calls_early_session = block_calls_early_session
+    st.session_state.bot_earliest_entry_time = earliest_entry_time
     st.session_state.bot_max_capital_per_trade = max_capital_per_trade
     st.session_state.bot_split_session = split_session
     st.session_state.bot_max_trades_per_session = max_trades_per_session
@@ -226,6 +233,19 @@ def render_bot_control() -> bool:
             ),
         )
 
+        earliest_entry_time = st.time_input(
+            "No new entries before",
+            value=DEFAULT_EARLIEST_ENTRY_TIME,
+            disabled=is_running,
+            help=(
+                f"Default {DEFAULT_EARLIEST_ENTRY_TIME.strftime('%H:%M')} - based on analyzing all real paper "
+                "trades so far: 10:30-12:30 (the early-session model's window) lost Rs 5,889.65 net across 32 "
+                "trades, while every window from 12:30 onward was net positive. Simulated on the real trade "
+                "history: skipping everything before 12:30 would have turned +Rs 6,353 actual into +Rs 12,243. "
+                "Lower this (e.g. 00:00) to deliberately gather more early-morning data instead."
+            ),
+        )
+
         allow_calls_mode = st.checkbox(
             "Allow CALL trades (primary 15-min model)",
             value=False,
@@ -271,6 +291,7 @@ def render_bot_control() -> bool:
                     block_calls_early_session=block_early_calls_mode,
                     split_session=split_session_mode,
                     max_trades_per_session=int(max_trades_per_session),
+                    earliest_entry_time=earliest_entry_time,
                 )
                 st.rerun()
         with col2:
@@ -301,7 +322,9 @@ def render_bot_control() -> bool:
                 capital_note = f" · cap Rs {cap:,.0f}/trade" if cap != MAX_CAPITAL_PER_TRADE else ""
                 calls_note = "" if st.session_state.get("bot_put_only", True) else " · primary CALLs allowed"
                 early_calls_note = " · early-session CALLs blocked" if st.session_state.get("bot_block_calls_early_session", False) else ""
-                st.caption(f"{trades_note}{capital_note}{calls_note}{early_calls_note}".lstrip(" ·") or "​")
+                entry_time = st.session_state.get("bot_earliest_entry_time", DEFAULT_EARLIEST_ENTRY_TIME)
+                entry_time_note = f" · entries from {entry_time.strftime('%H:%M')}" if entry_time != DEFAULT_EARLIEST_ENTRY_TIME else ""
+                st.caption(f"{trades_note}{capital_note}{calls_note}{early_calls_note}{entry_time_note}".lstrip(" ·") or "​")
 
         st.caption(
             "Note: if you close/restart this dashboard while the bot is running, it loses track of that "

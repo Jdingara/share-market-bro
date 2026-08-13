@@ -101,6 +101,25 @@ FORCE_CLOSE_TIME = time(15, 25)  # force-close any open paper position before re
 # logic rather than a candle count.
 SESSION_SPLIT_TIME = time(13, 15)
 
+# Earliest wall-clock time a new entry is allowed at all, regardless of which
+# model would otherwise be eligible - added 2026-08-13 after analyzing all 116
+# real paper trades logged so far. Trading hour turned out to be the single
+# cleanest pattern in the data: 10:30-12:30 (entirely the early-session 5-min
+# model's window - the primary model can't fire before SESSION_SPLIT_TIME
+# regardless) lost -Rs 5,889.65 net across 32 trades, while every window from
+# 12:30 onward was net positive. A cutoff scan across candidate times (10:30
+# through 13:15, in 30-min steps) found 12:30 maximizes total P&L - moving it
+# later than 12:30 starts cutting into the clearly-profitable 12:30-13:00 and
+# 13:00-13:30 windows instead. Simulated on the real trade history: skipping
+# everything before 12:30 would have turned +Rs 6,353.10 actual into
+# +Rs 12,242.75 (kept 84 of 116 trades, win rate 41.3% -> 46.6%). A separate,
+# much larger dip around 14:30 (-Rs 8,011.25) was checked and NOT included in
+# this decision - traced to specific trades from 2026-07-09/07-10, before
+# STOP_LOSS_PCT was tightened from -10% to -5% that same day, not a live
+# pattern (excluding those two dates, the 14:30 window is only mildly negative
+# across 5 different days - not the clean signal the morning window is).
+EARLIEST_ENTRY_TIME = time(12, 30)
+
 SIGNAL_POLL_INTERVAL_SECONDS = 60
 POSITION_POLL_INTERVAL_SECONDS = 15
 
@@ -242,6 +261,12 @@ def _trade_slot_available(
     if not split_session:
         return trades_taken_today < max_trades_per_day
     return session_slots[_current_session(now)] < max_trades_per_session
+
+
+def _before_earliest_entry_time(now: datetime, earliest_entry_time: time) -> bool:
+    """Pure decision logic (no I/O), testable without a live feed - see
+    EARLIEST_ENTRY_TIME for the data behind this cutoff."""
+    return now.time() < earliest_entry_time
 
 
 def _kill_switch_engaged(kill_switch_path: Path = KILL_SWITCH_PATH) -> bool:
@@ -449,8 +474,10 @@ def _run_impl(
     split_session: bool = False,
     max_trades_per_session: int = 6,
     max_daily_loss_pct: float = MAX_DAILY_LOSS_PCT,
+    earliest_entry_time: time = EARLIEST_ENTRY_TIME,
 ) -> None:
     print(f"Signal source for today: {signal_source}")
+    print(f"No new entries before {earliest_entry_time} (see EARLIEST_ENTRY_TIME's docstring for the data behind this).")
     if split_session:
         print(
             f"NOTE: split_session=True - up to {max_trades_per_session} trades before {SESSION_SPLIT_TIME} "
@@ -550,6 +577,13 @@ def _run_impl(
                 f"(limit -Rs {daily_loss_limit:,.2f}) - no new entries for the rest of today."
             )
             break
+        if _before_earliest_entry_time(now, earliest_entry_time):
+            print(
+                f"[{now.time()}] Before {earliest_entry_time} - no new entries yet (real trade data shows this "
+                f"window underperforms, see EARLIEST_ENTRY_TIME) - waiting."
+            )
+            time_module.sleep(SIGNAL_POLL_INTERVAL_SECONDS)
+            continue
         if not _trade_slot_available(now, trades_taken_today, session_slots, max_trades_per_day, max_trades_per_session, split_session):
             if split_session and _current_session(now) == "morning":
                 # Morning quota is full but the afternoon session hasn't opened yet -
@@ -801,6 +835,14 @@ if __name__ == "__main__":
                          help=f"Circuit breaker: stop taking new trades for the day once today's realized loss "
                               f"reaches this share of start-of-day capital (default: {MAX_DAILY_LOSS_PCT * 100:.0f}%%)."
                               " Any position already open when it trips still runs to its normal exit.")
+    parser.add_argument("--earliest-entry-time", type=lambda s: datetime.strptime(s, "%H:%M").time(),
+                         default=EARLIEST_ENTRY_TIME,
+                         help=f"No new entries before this wall-clock time, HH:MM 24h (default: "
+                              f"{EARLIEST_ENTRY_TIME.strftime('%H:%M')}). Based on analyzing all real paper "
+                              "trades so far: 10:30-12:30 (the early-session model's window) lost money net, "
+                              "every window from 12:30 onward was net positive - see EARLIEST_ENTRY_TIME's "
+                              "docstring for the full numbers. Lower this (e.g. 00:00) to deliberately gather "
+                              "more early-morning data instead.")
     args = parser.parse_args()
     run(
         max_minutes=args.max_minutes,
@@ -812,4 +854,5 @@ if __name__ == "__main__":
         split_session=args.split_session,
         max_trades_per_session=args.max_trades_per_session,
         max_daily_loss_pct=args.max_daily_loss_pct,
+        earliest_entry_time=args.earliest_entry_time,
     )

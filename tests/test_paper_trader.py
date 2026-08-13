@@ -14,11 +14,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import os
 
 from paper_trader import (
+    EARLIEST_ENTRY_TIME,
     LOCK_FILE_PATH,
     MIN_CANDLES_FOR_SIGNAL,
     SESSION_SPLIT_TIME,
     DuplicateProcessError,
     _acquire_lock,
+    _before_earliest_entry_time,
     _build_early_session_signal_fn,
     _circuit_breaker_tripped,
     _current_session,
@@ -373,3 +375,17 @@ def test_effective_put_only_matches_the_2026_08_12_defaults():
     # The actual defaults shipped: primary stays PUT-only, early-session allows CALL.
     assert _effective_put_only(used_early_session_model=False, put_only=True, early_session_put_only=False) is True
     assert _effective_put_only(used_early_session_model=True, put_only=True, early_session_put_only=False) is False
+
+
+def test_before_earliest_entry_time_true_when_still_early():
+    assert _before_earliest_entry_time(datetime(2026, 8, 13, 11, 0), EARLIEST_ENTRY_TIME)
+
+
+def test_before_earliest_entry_time_false_at_and_after_cutoff():
+    assert not _before_earliest_entry_time(datetime(2026, 8, 13, 12, 30), EARLIEST_ENTRY_TIME)
+    assert not _before_earliest_entry_time(datetime(2026, 8, 13, 15, 0), EARLIEST_ENTRY_TIME)
+
+
+def test_before_earliest_entry_time_respects_a_custom_cutoff():
+    custom = time(0, 0)  # e.g. deliberately gathering early-morning data
+    assert not _before_earliest_entry_time(datetime(2026, 8, 13, 9, 20), custom)
