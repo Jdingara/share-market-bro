@@ -121,7 +121,12 @@ def _fetch_request_token(api_key: str, user_id: str, password: str, totp_secret:
             "twofa_type": "totp",
         },
     )
-    twofa_resp.raise_for_status()
+    # No raise_for_status() here either, same reason as the login step above -
+    # Zerodha returns a real 400 with a JSON body, not an empty error page.
+    # This was a known, flagged-but-unfixed gap (the comment above already
+    # claimed this step "already reads the body first" - it didn't) until a
+    # raw, unparsed HTTPError here crashed the whole bot at startup with no
+    # useful message, confirmed live 2026-08-14.
     twofa_data = twofa_resp.json()
     if twofa_data.get("status") != "success":
         raise AuthError(f"Zerodha 2FA step failed: {twofa_data.get('message', twofa_data)}")

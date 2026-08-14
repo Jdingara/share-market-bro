@@ -334,6 +334,35 @@ def _reauthenticate():
     return _call_with_retry(login, force=False)
 
 
+def _login_with_retry():
+    """Retries the initial login indefinitely (paced by RECOVERY_SLEEP_SECONDS,
+    not a tight loop) instead of letting a startup login failure kill the whole
+    process outright. Found live 2026-08-14: an unhandled AuthError/HTTPError
+    here (that day, a raw /api/twofa failure) crashed the process before the
+    main loop's TokenException recovery ever got a chance to run - the in-loop
+    recovery this codebase already has (see the try/except around the main
+    loop, and _monitor_position_until_exit) was never reachable for a startup
+    failure. This makes the same "run manual_login.py, any running process
+    picks up the fix automatically" promise (already true mid-loop) actually
+    true at startup too, instead of requiring a manual restart after every
+    startup auth failure. Gives up (re-raising the original exception) only
+    once the market's already closed for the day - no point waiting for a
+    login that can't lead to any trade anymore."""
+    while True:
+        try:
+            return _reauthenticate()
+        except Exception as exc:
+            if datetime.now().time() >= MARKET_CLOSE_TIME:
+                print(f"[{datetime.now().time()}] Could not log in before market close ({exc!r}) - giving up for today.")
+                raise
+            print(
+                f"[{datetime.now().time()}] Could not log in yet ({exc!r}) - waiting and retrying. If this "
+                "is a CAPTCHA or 2FA issue, run `py src/manual_login.py` to fix it; this process will pick "
+                "up the fresh token automatically on its next retry, no restart needed."
+            )
+            time_module.sleep(RECOVERY_SLEEP_SECONDS)
+
+
 def _monitor_position_until_exit(kite, tradingsymbol: str, entry_premium: float):
     """Polls an open position's premium until an exit condition fires. Returns
     (kite, exit_reason, exit_premium) - kite is returned because it may get
@@ -519,13 +548,7 @@ def _run_impl(
     if early_signal_fn is not None:
         print("Early-session (5-min candle) model loaded - can signal from ~1h20m after open instead of ~4h.")
 
-    # force=True, not a plain login() - a cached token from an earlier session that
-    # went stale (see _reauthenticate) would otherwise be reused here unchanged and
-    # crash the very first real API call below. Found live 2026-07-27: the mid-loop
-    # reauth logic already required this; starting the process fresh needs the same
-    # guarantee, since it has no in-loop exception handler to fall back on if this
-    # cached token is bad.
-    kite = _reauthenticate()
+    kite = _login_with_retry()
     nifty_token = _call_with_retry(get_instrument_token, kite, "NIFTY 50", "NSE")
     vix_token = _call_with_retry(get_instrument_token, kite, "INDIA VIX", "NSE")
 

@@ -1,7 +1,7 @@
 """Unit tests for paper_trader.py's pure decision logic (no live API needed)."""
 
 import sys
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,9 +13,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import os
 
+from auth import AuthError
 from paper_trader import (
     EARLIEST_ENTRY_TIME,
     LOCK_FILE_PATH,
+    MARKET_CLOSE_TIME,
     MIN_CANDLES_FOR_SIGNAL,
     SESSION_SPLIT_TIME,
     DuplicateProcessError,
@@ -28,6 +30,7 @@ from paper_trader import (
     _is_process_alive,
     _is_stale_signal,
     _kill_switch_engaged,
+    _login_with_retry,
     _monitor_position_until_exit,
     _reauthenticate,
     _record_trade_slot,
@@ -389,3 +392,40 @@ def test_before_earliest_entry_time_false_at_and_after_cutoff():
 def test_before_earliest_entry_time_respects_a_custom_cutoff():
     custom = time(0, 0)  # e.g. deliberately gathering early-morning data
     assert not _before_earliest_entry_time(datetime(2026, 8, 13, 9, 20), custom)
+
+
+def test_login_with_retry_returns_immediately_on_first_success():
+    with patch("paper_trader._reauthenticate", return_value="kite_client") as mock_reauth:
+        assert _login_with_retry() == "kite_client"
+    mock_reauth.assert_called_once()
+
+
+def test_login_with_retry_survives_a_startup_failure_and_succeeds_next_try():
+    # Found live 2026-08-14: a raw auth failure at startup (that day, /api/twofa)
+    # used to crash the whole process with no recovery - this confirms it now
+    # waits and retries instead, exactly like the in-loop TokenException handling
+    # already does mid-day.
+    call_count = {"n": 0}
+
+    def flaky_reauth():
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise AuthError("Zerodha 2FA step failed: Invalid TOTP.")
+        return "kite_client"
+
+    with patch("paper_trader.time_module.sleep"), \
+         patch("paper_trader.datetime") as mock_datetime, \
+         patch("paper_trader._reauthenticate", side_effect=flaky_reauth):
+        mock_datetime.now.return_value = datetime(2026, 8, 14, 11, 0)  # well before market close
+        assert _login_with_retry() == "kite_client"
+    assert call_count["n"] == 2
+
+
+def test_login_with_retry_gives_up_once_market_is_closed():
+    after_close = datetime.combine(datetime(2026, 8, 14).date(), MARKET_CLOSE_TIME) + timedelta(minutes=1)
+    with patch("paper_trader.time_module.sleep"), \
+         patch("paper_trader.datetime") as mock_datetime, \
+         patch("paper_trader._reauthenticate", side_effect=AuthError("still broken")):
+        mock_datetime.now.return_value = after_close
+        with pytest.raises(AuthError, match="still broken"):
+            _login_with_retry()
