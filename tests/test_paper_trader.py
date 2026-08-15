@@ -374,10 +374,13 @@ def test_effective_put_only_uses_early_session_setting_when_early_session():
     assert _effective_put_only(True, put_only=False, early_session_put_only=True) is True
 
 
-def test_effective_put_only_matches_the_2026_08_12_defaults():
-    # The actual defaults shipped: primary stays PUT-only, early-session allows CALL.
-    assert _effective_put_only(used_early_session_model=False, put_only=True, early_session_put_only=False) is True
-    assert _effective_put_only(used_early_session_model=True, put_only=True, early_session_put_only=False) is False
+def test_effective_put_only_matches_the_2026_08_15_defaults():
+    # Both models stay PUT-only by default, as of the 2026-08-15 revert - the
+    # brief 08-12-08-14 exception (early-session allowed CALL by default) was
+    # based on a threshold scan that turned out to be measuring a stale,
+    # too-lenient backtester stop-loss, not the real live bracket.
+    assert _effective_put_only(used_early_session_model=False, put_only=True, early_session_put_only=True) is True
+    assert _effective_put_only(used_early_session_model=True, put_only=True, early_session_put_only=True) is True
 
 
 def test_before_earliest_entry_time_true_when_still_early():

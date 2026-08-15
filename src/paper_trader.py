@@ -21,11 +21,16 @@ loss reaches a set share of the day's starting capital. Both are already
 active in paper mode so they're proven out before any real money is at risk.
 
 CALL trades are gated PER MODEL, not with one flat switch (since 2026-08-12):
-the primary (15-min) model stays PUT-only by default (put_only) since its
-CALL calibration is still flat/unreliable even after adding VIX + Greeks
-features, while the early-session (5-min) model allows CALL by default
-(early_session_put_only) since its CALL calibration is now genuinely good -
-see _effective_put_only and PROJECT_STATUS.md for the full comparison.
+put_only (primary, 15-min) and early_session_put_only (early-session, 5-min)
+are independent settings - see _effective_put_only. BOTH default to True
+(PUT-only) as of 2026-08-15: the early-session model's CALL was briefly
+allowed by default (08-12-08-14) based on a threshold scan that turned out
+to be measuring the wrong bracket - backtester.py's STOP_LOSS_PCT had been
+stale at -10% since 07-10 (the live bot uses -5%), so every label used to
+justify that call was systematically too lenient. Re-run after fixing the
+stale constant: the early-session model's CALL precision doesn't actually
+climb with confidence under the real bracket, same "collapses" pattern as
+the primary model. See PROJECT_STATUS.md for the full incident.
 """
 
 from __future__ import annotations
@@ -237,15 +242,14 @@ def _current_session(now: datetime) -> str:
 
 def _effective_put_only(used_early_session_model: bool, put_only: bool, early_session_put_only: bool) -> bool:
     """Pure decision logic (no I/O), testable without a live feed. Which put_only
-    setting actually applies depends on which model produced the signal -
-    added 2026-08-12 after the CALL-improvement work (VIX + Greeks features)
-    found the early-session (5-min) model's CALL calibration is now genuinely
-    good (62%->80% precision climbing cleanly with confidence), while the
-    primary (15-min) model's is still not (flat ~40-50%, no better than
-    baseline) - see PROJECT_STATUS.md for the full comparison. put_only keeps
-    its old meaning and default (True) for the primary model, unchanged;
-    early_session_put_only is new and defaults to False (CALL allowed) since
-    that's what the evidence now supports for that model specifically."""
+    setting actually applies depends on which model produced the signal - lets
+    the two models be gated independently if the evidence ever again supports
+    treating them differently (it briefly did, 2026-08-12 to 08-14, based on a
+    threshold scan that turned out to be measuring a stale, too-lenient -10%
+    stop-loss in backtester.py instead of the real -5% one - see
+    PROJECT_STATUS.md for the full incident). Both default to True (PUT-only)
+    as of 2026-08-15, since neither model's CALL precision actually climbs
+    with confidence under the corrected, real bracket."""
     return early_session_put_only if used_early_session_model else put_only
 
 
@@ -499,7 +503,7 @@ def _run_impl(
     max_trades_per_day: int = 1,
     max_capital_per_trade: float = MAX_CAPITAL_PER_TRADE,
     put_only: bool = True,
-    early_session_put_only: bool = False,
+    early_session_put_only: bool = True,
     split_session: bool = False,
     max_trades_per_session: int = 6,
     max_daily_loss_pct: float = MAX_DAILY_LOSS_PCT,
@@ -523,8 +527,8 @@ def _run_impl(
     if put_only:
         print(
             "NOTE: put_only=True (the default) - the PRIMARY model's CALL signals are being skipped. "
-            "Its CALL confidence is still flat/unreliable even after adding VIX + Greeks features "
-            "(confirmed 2026-08-12) - use --allow-calls to override."
+            "Its CALL confidence doesn't reliably climb with confidence (confirmed 2026-08-15, after "
+            "fixing a stale backtester bracket) - use --allow-calls to override."
         )
     else:
         print(
@@ -533,15 +537,16 @@ def _run_impl(
         )
     if early_session_put_only:
         print(
-            "NOTE: --block-calls-early-session passed - the EARLY-SESSION model's CALL signals are being "
-            "skipped too, despite its CALL calibration now being genuinely good (confirmed 2026-08-12: "
-            "62%->80% precision climbing cleanly with confidence)."
+            "NOTE: early_session_put_only=True (the default) - the EARLY-SESSION model's CALL signals "
+            "are being skipped too. Briefly allowed by default 08-12 to 08-14 based on a threshold scan "
+            "that turned out to be measuring a stale, too-lenient stop-loss - reverted 2026-08-15 once "
+            "corrected. Use --allow-calls-early-session to override."
         )
     else:
         print(
-            "NOTE: early_session_put_only=False (the default since 2026-08-12) - the EARLY-SESSION "
-            "model's CALL signals ARE being taken. Its CALL calibration is now genuinely good (confirmed "
-            "2026-08-12, unlike the primary model above) - use --block-calls-early-session to override."
+            "WARNING: --allow-calls-early-session passed - the early-session model's CALL signals are "
+            "being taken despite still-weak precision there under the corrected bracket. Only use this "
+            "deliberately, e.g. to gather more CALL data."
         )
     signal_fn = _build_signal_fn(signal_source)
     early_signal_fn = _build_early_session_signal_fn(signal_source)
@@ -834,16 +839,16 @@ if __name__ == "__main__":
                               f"(default: Rs {MAX_CAPITAL_PER_TRADE:,.2f}). Excess balance stays idle.")
     parser.add_argument("--allow-calls", action="store_true",
                          help="Allow the PRIMARY model's CALL signals too (default: off, PUT-only). Its CALL "
-                              "confidence is still flat/unreliable even after adding VIX + Greeks features "
-                              "(confirmed 2026-08-12) - PUT-only is the standing default for this model. "
-                              "The early-session model's CALL signals are handled separately, see "
-                              "--block-calls-early-session (allowed by default).")
-    parser.add_argument("--block-calls-early-session", action="store_true",
-                         help="Block the EARLY-SESSION (5-min) model's CALL signals too (default: off, i.e. "
-                              "CALL IS allowed there). Its CALL calibration is now genuinely good (confirmed "
-                              "2026-08-12: 62%%->80%% precision climbing cleanly with confidence) - unlike the "
-                              "primary model above, which stays PUT-only by default. Pass this to be extra "
-                              "conservative and block CALL everywhere.")
+                              "confidence doesn't reliably climb with confidence (confirmed 2026-08-15) - "
+                              "PUT-only is the standing default for this model. The early-session model's "
+                              "CALL signals are handled separately, see --allow-calls-early-session.")
+    parser.add_argument("--allow-calls-early-session", action="store_true",
+                         help="Allow the EARLY-SESSION (5-min) model's CALL signals too (default: off, "
+                              "PUT-only - same as the primary model). Briefly allowed by default 08-12 to "
+                              "08-14 based on a threshold scan that turned out to be measuring a stale, "
+                              "too-lenient backtester stop-loss (-10%% instead of the live -5%%) - reverted "
+                              "2026-08-15 once corrected, since the real precision doesn't climb with "
+                              "confidence either. Only use this deliberately, e.g. to gather more CALL data.")
     parser.add_argument("--split-session", action="store_true",
                          help=f"Split the daily cap into two independent windows instead of one flat "
                               f"--max-trades-per-day: up to --max-trades-per-session trades before "
@@ -873,7 +878,7 @@ if __name__ == "__main__":
         max_trades_per_day=args.max_trades_per_day,
         max_capital_per_trade=args.max_capital_per_trade,
         put_only=not args.allow_calls,
-        early_session_put_only=args.block_calls_early_session,
+        early_session_put_only=not args.allow_calls_early_session,
         split_session=args.split_session,
         max_trades_per_session=args.max_trades_per_session,
         max_daily_loss_pct=args.max_daily_loss_pct,

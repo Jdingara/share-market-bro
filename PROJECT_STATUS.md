@@ -51,7 +51,7 @@ Build an autonomous bot that trades NIFTY 50 index options (calls and puts) thro
 | **5. Live trading** | Real Kite order API calls, safety guards (kill switch, daily loss circuit breaker), static-IP registration | ⬜ Not started |
 | **6. ML enhancement** | Feature-engineer OHLCV + indicators, train classifiers (Random Forest, Logistic Regression, Gradient Boosting) on historical labeled outcomes, compare against the rule-based signal | ✅ Built, honestly 4-way compared, and **now the live default** — see below |
 
-## Current Status (last updated: 2026-08-14)
+## Current Status (last updated: 2026-08-15)
 
 Phases 0 through 4 and Phase 6 are complete. Phase 4 (paper trading) is built and smoke-tested but **not yet run through a full live trading day** - it now runs on the Phase 6 Gradient Boosting (XGBoost) signal by default (see the 2026-07-07 decision below), so tomorrow's run will be the first real test of that combination.
 
@@ -432,8 +432,25 @@ Phases 0 through 4 and Phase 6 are complete. Phase 4 (paper trading) is built an
 
   **Live-verified same day**: user ran `manual_login.py` in parallel while this fix was being built; today's token cached successfully (`2026-08-14`) immediately after.
 
+**Real bug found, 2026-08-15: `backtester.py`'s stop-loss had been stale at -10% since 07-10, silently invalidating every ML label generated since then - including Tuesday's "early-session CALL is fixed" finding, which did not survive the correction.**
+
+  User asked for a bracket-change analysis (+5%/-3% instead of +10%/-5%) - investigating it first required trusting the backtester's current -10%/-5% baseline, which surfaced the real problem: `backtester.py`'s `STOP_LOSS_PCT` was still `0.10`. Git-confirmed: the 2026-07-10 commit that tightened the LIVE stop-loss (`paper_trader.py`) from -10% to -5% touched `paper_trader.py`, `dashboard.py`, and `trade_chart.py` - never `backtester.py`. Every ML label since then (`build_labeled_dataset` -> `simulate_trade`) was generated against a stop-loss twice as loose as the one actually enforced live, systematically making every simulated trade look safer than it really was.
+
+  **Fixed**: `backtester.py`'s `STOP_LOSS_PCT` corrected to `0.05`, matching `paper_trader.py`. Retrained all 4 models (random_forest, logistic_regression, gradient_boosting primary, gradient_boosting_5min early-session) against the corrected labels. Unconditional win rates dropped sharply once measured honestly (e.g. early-session CALL: 47.8% -> 27.8%) - confirming the old numbers really had been inflated, not just noisy.
+
+  **Consequence: Tuesday's "early-session model's CALL calibration is genuinely good" finding (62%->80% precision climbing cleanly with confidence) does not survive the correction.** Re-run `tests/call_threshold_scan.py` against the corrected models: the early-session model's CALL precision is flat/noisy under the real bracket (43% -> 42.9% -> 54.5%(n=33) -> 38.5% -> 36.4%), the same "collapses, doesn't reliably track confidence" pattern the whole CALL-improvement effort was trying to fix in the first place - not the clean monotonic climb reported two days ago. That climb was substantially an artifact of labels that gave every simulated trade twice the real cushion. The primary model's CALL, by contrast, looks marginally better under the corrected labels than before (peaks ~60% around threshold 0.55, thin sample) - still not clearly usable, but the two models' relative ranking from Tuesday has essentially reversed.
+
+  **Reverted same day**: `early_session_put_only` default flipped back to `True` (PUT-only, matching the primary model) - `_effective_put_only`'s docstring, `paper_trader.py`'s module docstring, and both CLI flags updated. `--block-calls-early-session` (opt-out, matched the old default) renamed to `--allow-calls-early-session` (opt-in, matches the new default and mirrors `--allow-calls`'s existing naming for the primary model) - a plain default flip without a rename would have left a `--block-...` flag whose own name no longer matched what it did. Matching dashboard checkbox relabeled to "Allow CALL trades (early-session 5-min model)", off by default, same style as the primary model's checkbox. 1 test updated to match the new default. Full suite still 133 passing.
+
+  **The EARLIEST_ENTRY_TIME (12:30) finding is unaffected** - it was built entirely from the real paper-trade log (real quoted premiums, real exit reasons), never touched `backtester.py` or simulated premiums, so this bug couldn't have contaminated it.
+
+  **No live bot was actually running with the stale model/settings combination at the point this was found and fixed** - yesterday's process had already stopped itself (circuit breaker, then market close); the fix applies cleanly the next time the bot starts, no mid-day restart/orphaned-position risk.
+
+  **Lesson, worth keeping**: this is the second time a cross-file constant has silently diverged without either half raising an error (the first was the `/api/twofa` gap, 2026-08-14). Neither `paper_trader.py` nor `backtester.py` cross-checks that their brackets agree - worth a `PROJECT_STATUS.md` Open Decision, not a code fix required right now, but a real drift risk if either file's constant changes again without remembering the other exists.
+
 ## Open Decisions (resolve before relevant phase starts)
 
+- **`paper_trader.py` and `backtester.py` each hardcode their own TARGET_PCT/STOP_LOSS_PCT with no cross-check that they agree - found drifted 2026-08-15 (backtester.py stuck at -10% for over a month after the live stop was tightened to -5%).** Not fixed structurally (e.g. a shared constant, or a startup assertion) - just corrected by hand this once. Worth a real fix (single source of truth, or at least a loud check) before this drifts silently again.
 - **Profit-generation ideas from the 2026-08-13 trade analysis, not yet acted on (time-of-day filter was #1 and is done - see Current Status):**
   - **Position sizing / drawdown control** - ~80.4% average capital deployed per trade, no fixed-fractional or confidence-scaled sizing exists. Directly implicated in the -38.46% max drawdown seen so far (a 6-loss streak at near-max exposure). Candidate: risk a smaller, fixed % of capital per trade instead of however many lots the capped balance affords.
   - **Promote Max Pain from shadow-mode logging to a real filter** - 14-point win-rate gap (28.0% vs 42.1%) now confirmed on 67 trades, not just the original week. Sitting unused.

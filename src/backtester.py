@@ -38,7 +38,11 @@ RESULTS_DIR = PROJECT_ROOT / "data" / "backtest_results"
 
 MIN_DAILY_HISTORY = 55  # enough rows for a meaningful EMA(50) and a 20-day volatility window
 TARGET_PCT = 0.10
-STOP_LOSS_PCT = 0.10
+STOP_LOSS_PCT = 0.05  # matches paper_trader.py's live stop, tightened from 0.10 there on 2026-07-10 -
+# this module was never updated to match at the time, confirmed via git history (2026-08-15) while
+# investigating a bracket-change question. Every ML label generated between 07-10 and this fix used
+# the stale -10% stop, systematically too lenient versus what the live bot actually enforces (-5%) -
+# see PROJECT_STATUS.md for the full incident and the retrain this required.
 VOLATILITY_WINDOW = 20
 
 
