@@ -456,6 +456,14 @@ Phases 0 through 4 and Phase 6 are complete. Phase 4 (paper trading) is built an
 
   **Handled live without disruption**: a real PUT position was open when this was found (unaffected by the bug, since PUT is always allowed regardless of these checkboxes) - fixed and restarted the dashboard process only, leaving the trading process untouched, rather than risk the position.
 
+**Dashboard "running" badge fixed to check reality, not just its own memory, 2026-08-19 (same day as the checkbox fix, prompted by the confusion it kept causing).**
+
+  The dashboard's `is_running` state was purely `st.session_state.bot_process is not None and process.poll() is None` - it never actually checked whether a bot was really running, only whether *this specific browser session* had launched one itself. Any time the bot was started from a terminal, or the dashboard process got restarted while the bot kept running underneath it (both of which happened repeatedly this week while fixing other things), the badge showed "Not running" for a bot that was genuinely alive - confusing, and risked someone clicking Start into what looks like a fresh run and hitting the duplicate-process guard for no real reason.
+
+  **Fixed**: new `_externally_running_pid()` checks the real lock file `paper_trader.py` itself already uses for its own duplicate-process protection (same PID-liveness check, duplicated the same way `KILL_SWITCH_PATH` already is, to avoid pulling in `paper_trader.py`'s heavier imports). `is_running` is now `session_tracked_running or external_pid is not None`. The badge shows "Running (PID N)" instead of a start time when it's an externally-detected process (the real start time isn't known in that case). `stop_bot()` now falls back to `taskkill /F /PID` when there's no session-tracked Popen handle to `.terminate()`, so Stop actually works on an externally-started process too, not just a silent no-op. Kill Switch was already file-based and unaffected by any of this - it always worked regardless of which session started the bot.
+
+  UI-only change (`dashboard.py`), no direct unit test (Streamlit widgets aren't exercised by the pytest suite) - verified by a clean compile, a dashboard restart, and confirming it correctly detected a real bot process (PID 25588) that had been started from a terminal earlier that day. Full suite still 133 passing (unaffected either way).
+
 ## Open Decisions (resolve before relevant phase starts)
 
 - **`paper_trader.py` and `backtester.py` each hardcode their own TARGET_PCT/STOP_LOSS_PCT with no cross-check that they agree - found drifted 2026-08-15 (backtester.py stuck at -10% for over a month after the live stop was tightened to -5%).** Not fixed structurally (e.g. a shared constant, or a startup assertion) - just corrected by hand this once. Worth a real fix (single source of truth, or at least a loud check) before this drifts silently again.

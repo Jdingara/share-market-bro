@@ -37,6 +37,8 @@ DEFAULT_EARLIEST_ENTRY_TIME = dt_time(12, 30)  # same default as paper_trader.py
 # heavier imports (ml_signal, kiteconnect, etc.) just for one path constant, same
 # as PAPER_TRADES_CSV above already does its own thing rather than importing it.
 KILL_SWITCH_PATH = PROJECT_ROOT / "data" / "paper_trades" / "KILL_SWITCH"
+# Same path paper_trader.py's LOCK_FILE_PATH points at, same duplication reason.
+LOCK_FILE_PATH = PROJECT_ROOT / "data" / "paper_trades" / "paper_trader.lock"
 
 st.set_page_config(page_title="Share Market Bro", page_icon="\U0001F4C8", layout="wide")
 
@@ -153,10 +155,48 @@ def start_bot(
     st.session_state.bot_max_trades_per_session = max_trades_per_session
 
 
+def _is_process_alive(pid: int) -> bool:
+    """Same check as paper_trader.py's own _is_process_alive - via Windows'
+    built-in tasklist, no extra dependency needed."""
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return str(pid) in result.stdout
+    except Exception:
+        return False
+
+
+def _externally_running_pid() -> int | None:
+    """Checks the real lock file paper_trader.py itself uses, so the dashboard
+    can tell a bot is running even if it wasn't started by THIS session - e.g.
+    launched from a terminal, or if the dashboard process itself got restarted
+    while the bot kept running underneath it. Found live 2026-08-19 (three
+    separate mornings, in fact): without this, the dashboard's "running" badge
+    only ever trusted its own in-memory session state, showing "Not running"
+    for a bot that was very much alive - confusing at best, and risked someone
+    clicking Start into what looks like a fresh run and hitting the duplicate-
+    process guard for no reason."""
+    if not LOCK_FILE_PATH.exists():
+        return None
+    try:
+        pid = int(LOCK_FILE_PATH.read_text().strip())
+    except ValueError:
+        return None
+    return pid if _is_process_alive(pid) else None
+
+
 def stop_bot() -> None:
     process = st.session_state.get("bot_process")
     if process and process.poll() is None:
         process.terminate()
+    else:
+        # No Popen handle for it in this session (started elsewhere) - fall
+        # back to killing by PID directly rather than silently doing nothing.
+        external_pid = _externally_running_pid()
+        if external_pid is not None:
+            subprocess.run(["taskkill", "/F", "/PID", str(external_pid)], capture_output=True)
     st.session_state.bot_process = None
     log_fh = st.session_state.get("bot_log_fh")
     if log_fh:
@@ -166,16 +206,27 @@ def stop_bot() -> None:
 
 def render_bot_control() -> bool:
     process = st.session_state.get("bot_process")
-    is_running = process is not None and process.poll() is None
+    session_tracked_running = process is not None and process.poll() is None
+    external_pid = None if session_tracked_running else _externally_running_pid()
+    is_running = session_tracked_running or external_pid is not None
 
     with st.container(border=True):
         header_col, badge_col = st.columns([3, 1])
         header_col.subheader("\U0001F916 Bot Control")
-        if is_running:
+        if session_tracked_running:
             started = st.session_state.bot_start_time.strftime("%H:%M:%S")
             badge_col.markdown(
                 f'<div style="text-align:right; padding-top:8px">'
                 f'<span class="sm-badge live"><span class="sm-dot live"></span>Running since {started}</span></div>',
+                unsafe_allow_html=True,
+            )
+        elif external_pid is not None:
+            # Running, but not started by this dashboard session (a terminal,
+            # or this session restarted while the bot kept going) - no known
+            # start time to show, but it's genuinely alive (PID confirmed).
+            badge_col.markdown(
+                f'<div style="text-align:right; padding-top:8px">'
+                f'<span class="sm-badge live"><span class="sm-dot live"></span>Running (PID {external_pid})</span></div>',
                 unsafe_allow_html=True,
             )
         else:
