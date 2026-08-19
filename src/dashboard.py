@@ -246,9 +246,20 @@ def render_bot_control() -> bool:
             ),
         )
 
+        # Keyed by today's date (not left to Streamlit's implicit label-based key) -
+        # found live 2026-08-15/08-18/08-19 (three separate mornings in a row): once
+        # checked, a Streamlit checkbox's value= default stops applying on later
+        # reruns for the *same* browser session, including across a dashboard
+        # restart the next day if the browser tab was never fully closed - so
+        # "off by default" silently stopped being true after the first time either
+        # box was ever checked. A date-keyed widget identity forces a genuinely
+        # fresh, unchecked widget every calendar day, while still behaving normally
+        # (stays as set) within that same day.
+        _today_key = date.today().isoformat()
         allow_calls_mode = st.checkbox(
             "Allow CALL trades (primary 15-min model)",
             value=False,
+            key=f"allow_calls_primary_{_today_key}",
             disabled=is_running,
             help=(
                 "Off by default - PUT-only. This model's CALL confidence doesn't reliably climb with "
@@ -262,6 +273,7 @@ def render_bot_control() -> bool:
         allow_calls_early_session_mode = st.checkbox(
             "Allow CALL trades (early-session 5-min model)",
             value=False,
+            key=f"allow_calls_early_session_{_today_key}",
             disabled=is_running,
             help=(
                 "Off by default - PUT-only, same as the primary model. Briefly allowed by default 08-12 "

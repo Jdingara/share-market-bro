@@ -51,7 +51,7 @@ Build an autonomous bot that trades NIFTY 50 index options (calls and puts) thro
 | **5. Live trading** | Real Kite order API calls, safety guards (kill switch, daily loss circuit breaker), static-IP registration | ⬜ Not started |
 | **6. ML enhancement** | Feature-engineer OHLCV + indicators, train classifiers (Random Forest, Logistic Regression, Gradient Boosting) on historical labeled outcomes, compare against the rule-based signal | ✅ Built, honestly 4-way compared, and **now the live default** — see below |
 
-## Current Status (last updated: 2026-08-15)
+## Current Status (last updated: 2026-08-19)
 
 Phases 0 through 4 and Phase 6 are complete. Phase 4 (paper trading) is built and smoke-tested but **not yet run through a full live trading day** - it now runs on the Phase 6 Gradient Boosting (XGBoost) signal by default (see the 2026-07-07 decision below), so tomorrow's run will be the first real test of that combination.
 
@@ -447,6 +447,14 @@ Phases 0 through 4 and Phase 6 are complete. Phase 4 (paper trading) is built an
   **No live bot was actually running with the stale model/settings combination at the point this was found and fixed** - yesterday's process had already stopped itself (circuit breaker, then market close); the fix applies cleanly the next time the bot starts, no mid-day restart/orphaned-position risk.
 
   **Lesson, worth keeping**: this is the second time a cross-file constant has silently diverged without either half raising an error (the first was the `/api/twofa` gap, 2026-08-14). Neither `paper_trader.py` nor `backtester.py` cross-checks that their brackets agree - worth a `PROJECT_STATUS.md` Open Decision, not a code fix required right now, but a real drift risk if either file's constant changes again without remembering the other exists.
+
+**Real dashboard bug found and fixed, 2026-08-19: the CALL checkboxes' `value=False` default silently stopped applying after the first time either was ever checked - this had been quietly re-enabling both models' CALL trades on three separate mornings (08-15, 08-18, 08-19) despite the code correctly defaulting to PUT-only.**
+
+  Root cause: Streamlit checkboxes without an explicit `key=` use an implicit key derived from the label. Once a widget with a given key has been interacted with in a browser session, `value=` only seeds its *first* appearance - later reruns (including a dashboard restart the next day, if the browser tab was never fully closed) keep whatever was last set for that key, silently ignoring the code's default from then on. Both CALL checkboxes got checked once (accidentally, mid-testing) and stayed checked across dashboard restarts on three different days after that, each requiring a live catch-and-fix (twice needing a full stop/restart, once needing the Kill Switch mid-position).
+
+  **Fixed**: both checkboxes now key on `f"allow_calls_..._{date.today().isoformat()}"` - a genuinely fresh, unchecked widget every calendar day, while still behaving normally (stays as set) within the same day. This is a UI-only fix (`dashboard.py`, no `paper_trader.py` changes) with no direct unit test (Streamlit widgets aren't exercised by the pytest suite) - verified by compiling clean and confirming the dashboard restarts without error; the real test is whether this recurs on 08-20.
+
+  **Handled live without disruption**: a real PUT position was open when this was found (unaffected by the bug, since PUT is always allowed regardless of these checkboxes) - fixed and restarted the dashboard process only, leaving the trading process untouched, rather than risk the position.
 
 ## Open Decisions (resolve before relevant phase starts)
 
